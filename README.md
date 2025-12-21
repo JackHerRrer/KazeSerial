@@ -22,7 +22,7 @@ Since I wanted to learn React, i did this simple project, and of course Copilot 
   - **Regex Highlighting**: Define custom regex patterns to highlight specific log messages with custom colors.
   - **Split View**: A secondary "Focus" terminal to isolate matched logs or view different parts of the stream.
   - **Filtering**: (In progress) Filter logs to reduce noise.
-- **Cross-Platform**: Runs on Linux, Should also run on Windows, and macOS, not tested so far (powered by Tauri).
+- **Cross-Platform**: Runs on Linux and Windows, not tested so far on macOS (powered by Tauri).
 
 ## Tech Stack
 
