@@ -1,0 +1,117 @@
+'use client';
+
+import React, { useCallback, useEffect, useState } from 'react';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
+import Typography from '@mui/material/Typography';
+import SerialSettings from './SerialSettings';
+import HighLighSettings from './HighLighSettings';
+import { invoke } from "@tauri-apps/api/core";
+
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`simple-tabpanel-${index}`}
+      aria-labelledby={`simple-tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ p: 3 , borderBottom: 1, borderColor: 'divider' }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
+
+function a11yProps(index: number) {
+  return {
+    id: `simple-tab-${index}`,
+    'aria-controls': `simple-tabpanel-${index}`,
+  };
+}
+
+interface ControlPanelProps {
+  onAppendLogs: () => void;
+  onRegenerateLogs: () => void;
+  isAutoScrollEnabled: boolean;
+  onToggleAutoScroll: () => void;
+  onClickClearLog : () => void;
+  onClickClearFocusLog : () => void;
+}
+
+const ControlPanel: React.FC<ControlPanelProps> = ({
+  onAppendLogs,
+  onRegenerateLogs,
+  isAutoScrollEnabled,
+  onToggleAutoScroll,
+  onClickClearLog,
+  onClickClearFocusLog
+}) => {
+  const [tabValue, setTabValue] = useState(0);
+
+  const handleChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
+  };
+
+  return (
+    <Box sx={{ width: '100%', borderLeft: '1px solid #333' }}>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Tabs value={tabValue} onChange={handleChange} aria-label="control panel tabs">
+          <Tab label="Serial" {...a11yProps(0)} />
+          <Tab label="Demo" {...a11yProps(1)} />
+          <Tab label="File" {...a11yProps(2)} />
+        </Tabs>
+      </Box>
+      <TabPanel value={tabValue} index={0}>
+        <SerialSettings />
+      </TabPanel>
+      <TabPanel value={tabValue} index={1}>
+        <Box sx={{  display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1,  }}>
+          <Button variant="contained" onClick={onAppendLogs}>
+            Append 10 Logs
+          </Button>
+          <Button variant="contained" onClick={onRegenerateLogs}>
+            Regenerate Logs
+          </Button>
+        </Box>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={2}>
+        <Typography>File Settings content goes here.</Typography>
+      </TabPanel>
+      <Box sx={{ p:3 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 , pb:2}}>
+            <Button variant="contained" onClick={onToggleAutoScroll}>
+            {isAutoScrollEnabled ? 'Disable Auto-Scroll' : 'Enable Auto-Scroll'}
+            </Button>
+            <Button variant="contained" onClick={onClickClearLog}>
+            Clear Logs
+            </Button>
+            <Button variant="contained" onClick={onClickClearFocusLog}>
+            Clear Focus Logs
+            </Button>
+        </Box>
+        <HighLighSettings />
+      </Box>
+    </Box>
+  );
+};
+
+export default ControlPanel;
+function derive(newValue: any) {
+  throw new Error('Function not implemented.');
+}
+

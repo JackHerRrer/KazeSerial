@@ -1,65 +1,213 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState, useRef, useEffect, type SyntheticEvent} from 'react';
+import Container from '@mui/material/Container';
+import Box from '@mui/material/Box';
+import SerialTerminal from './components/SerialTerminal';
+import { Resizable } from 're-resizable';
+import type { ListImperativeAPI } from 'react-window';
+import ControlPanel from './components/ControlPanel';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from "@tauri-apps/api/core";
+import Typography from '@mui/material/Typography';
+
+let currentTime = 0;
+
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+  },
+});
+
+// Generate fake UART logs
+const generateLogs = (count: number) => {
+  const logs = [];
+
+  for (let i = 0; i < count; i++) {
+    currentTime += Math.random() * 0.1;
+    const timestamp = `[${currentTime.toFixed(6)}]`;
+    let message = '';
+    
+    const type = Math.random();
+    if (type < 0.1) {
+      message = `ERROR: Connection timeout at address 0x${Math.floor(Math.random() * 0xffff).toString(16)}`;
+    } else if (type < 0.3) {
+      message = `WARN: Retrying packet ${i}...`;
+    } else if (type < 0.6) {
+      message = `INFO: Received packet len=${Math.floor(Math.random() * 100)} flags=0x${Math.floor(Math.random() * 0xff).toString(16)}`;
+    } else {
+      message = `DEBUG: Processing data chunk ${i} state=${Math.floor(Math.random() * 5)}`;
+    }
+
+    invoke<string[]>("add_logs_line", { line: `${timestamp} ${message}` })
+        .then((s) => {
+            console.log("port opened:", s);
+        }).catch((err: unknown) => {
+            console.error(err);
+        });
+  }
+};
+
+const serialUart = ['UART0', 'UART1', 'UART2', 'UART3'];
+const initialLogs: string[] = [];
+
+type SerialMessage = {
+  message: string;
+  matched: boolean;
+};
 
 export default function Home() {
+  const listRefMain = useRef<ListImperativeAPI>(null!);
+  const listRefFocus = useRef<ListImperativeAPI>(null!);
+  
+  const [logs, setLogs] = useState<string[]>(initialLogs);
+  const [focusLogs, setFocusLogs] = useState<string[]>(initialLogs);
+  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
+
+
+  const appendLogs = (count: number) => {
+    generateLogs(count);
+  };
+
+  const addSingleLog = (log: string) => {
+    let tmpArr = [log];
+    setLogs(prevLogs => [...prevLogs, ...tmpArr]);
+  };
+
+  const addSingleFocusLog = (log: string) => {
+    let tmpArr = [log];
+    setFocusLogs(prevLogs => [...prevLogs, ...tmpArr]);
+  };
+  const regenerateLogs = () => {
+    currentTime = 0; // Reset time for new logs
+    generateLogs(10);
+  };
+  const clearLogs = () => {
+    let tmpArr: string[] = [];
+    setLogs(tmpArr);
+  };
+  const clearFocusLogs = () => {
+    let tmpArr: string[] = [];
+    setFocusLogs(tmpArr);
+  };
+  useEffect(() => {
+    if (isAutoScrollEnabled) {
+      if (listRefMain.current) {
+        if(logs.length > 0)
+          scrollToRow(listRefMain, logs.length - 1, 'auto');
+      }
+      if (listRefFocus.current) {
+        if(focusLogs.length > 0)
+          scrollToRow(listRefFocus, focusLogs.length - 1, 'auto');
+      }
+    }
+  }, [logs, focusLogs]);
+
+  useEffect(() => {
+      //listen to a event
+      const unlisten = listen<SerialMessage>("serial-data", (e) => {
+ //       console.log(e);
+//        console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
+        addSingleLog(e.payload.message);
+        if(e.payload.matched)
+        {
+          addSingleFocusLog(e.payload.message);
+        }
+      });
+
+      return () => {
+        unlisten.then(f => f());
+      }
+    }, [] );
+
+
+  const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
+    listRef.current?.scrollToRow({
+      align: "end",
+      behavior: behavior,
+      index: rowIndex,
+    });
+  };
+
+  const handleScroll = (listRef: React.RefObject<ListImperativeAPI>) => (event:SyntheticEvent<HTMLDivElement>) => {
+    if(event.nativeEvent == null) {
+      return;
+    }
+    const myTarget :HTMLDivElement = event.nativeEvent.target as HTMLDivElement;
+    let diff = myTarget.scrollHeight - myTarget.clientHeight - myTarget.scrollTop;
+    if(diff == 0) {
+      if (!isAutoScrollEnabled) {
+        setIsAutoScrollEnabled(true);
+      }
+    } else if((diff > 30)) {
+      if (isAutoScrollEnabled) {
+        setIsAutoScrollEnabled(false);
+      }
+    } 
+  };
+  console.log("render page");
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <ThemeProvider theme={darkTheme}>
+      <CssBaseline />
+        {/* Horizontal Container */}
+        <Container disableGutters maxWidth={false} sx={{ py: 0, height: '100vh', width:'100%', display:'flex', flexDirection: 'row' ,pl:0, pr:0}}>
+          {/* Horizontal resizable Container */}
+          <Resizable minHeight='100%' maxWidth='90%' maxHeight='100%' defaultSize={{ width: '70%',height: '100%',}}>
+            {/* Serial vertical Container */}
+            <Container disableGutters maxWidth={false} sx={{ py: 1, height: '100vh', width:'100%', display:'flex', flexDirection: 'column' ,pl:0, pr:0}}>
+              {/* Main Serial Terminal */}
+              <Resizable
+                minWidth='100%'
+                maxWidth='100%'
+                maxHeight='90%'
+                defaultSize={{
+                  width: '100%',
+                  height: '70%',
+                }}
+                >
+                  <SerialTerminal
+                    lines={logs}
+                    listRef={listRefMain}
+                    onScroll={handleScroll(listRefMain)}
+                  />
+              </Resizable>
+              {/* Focus Serial Terminal */}
+              <Typography
+              component="span"
+              sx={{
+                fontFamily: 'monospace',
+                fontSize: '0.875rem',
+                color: '#d4d4d4',
+                lineHeight: 1.2,
+              }}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+              {"focus"}
+            </Typography>
+              <Box sx={{ flexGrow: 1,  minHeight: '10%' }}>
+                <SerialTerminal
+                  lines={focusLogs}
+                  listRef={listRefFocus}
+                  onScroll={handleScroll(listRefFocus)}
+                />
+              </Box>
+            </Container>
+          </Resizable>
+
+          <Container disableGutters sx={{ height: '100vh' }}>
+            {/* Control Panel */}
+            <ControlPanel 
+              onAppendLogs={() => appendLogs(10)}
+              onRegenerateLogs={regenerateLogs}
+              isAutoScrollEnabled={isAutoScrollEnabled}
+              onToggleAutoScroll={() => setIsAutoScrollEnabled(prev => !prev)}
+              onClickClearLog={clearLogs}
+              onClickClearFocusLog={clearFocusLogs}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+          </Container>
+        </Container>
+    </ThemeProvider>
   );
 }
