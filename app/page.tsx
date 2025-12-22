@@ -73,8 +73,11 @@ export default function Home() {
   };
 
   const addSingleLog = (log: SerialMessage) => {
-    let tmpArr = [log];
-    setLogs(prevLogs => [...prevLogs, ...tmpArr]);
+    let insertedIndex: number = logs.length;
+    setLogs(prevLogs => {
+      return [...prevLogs, log];
+    });
+    return insertedIndex; // Retourne l'index de la ligne insérée
   };
 
   const addSingleFocusLog = (log: SerialMessage) => {
@@ -94,7 +97,12 @@ export default function Home() {
     setFocusLogs(tmpArr);
   };
   const onClickFocusLogs = (id:number) => {
-    console.log('click log id:', id);
+    const list = listRefMain.current;
+    list?.scrollToRow({
+      align: "auto", // optional
+      behavior: "auto", // optional
+      index: id
+    });
   };
   useEffect(() => {
     if (isAutoScrollEnabled) {
@@ -115,7 +123,7 @@ export default function Home() {
         //console.log(e);
         //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
         let serialMessage: SerialMessage = e.payload;
-        addSingleLog(serialMessage);
+        serialMessage.id = addSingleLog(serialMessage);
         if(e.payload.matched)
         {
           addSingleFocusLog(serialMessage);
