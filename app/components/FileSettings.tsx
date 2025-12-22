@@ -32,7 +32,13 @@ const FileSettings: React.FC = () => {
             // user cancelled the selection
         } else {
             let contents = await readTextFile(selected, {});
-            console.log(contents)
+            for (const line of contents.split("\n")){
+                invoke<string[]>("add_logs_line", { line: line })
+                .then((s) => {
+                }).catch((err: unknown) => {
+                    console.error(err);
+                });
+            }
         }
     };
 
