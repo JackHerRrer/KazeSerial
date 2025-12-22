@@ -52,6 +52,7 @@ interface ControlPanelProps {
   onToggleAutoScroll: () => void;
   onClickClearLog : () => void;
   onClickClearFocusLog : () => void;
+  onClickRefreshAll : () => void;
   logs: SerialMessage[];
   focusLogs: SerialMessage[];
 }
@@ -63,6 +64,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onToggleAutoScroll,
   onClickClearLog,
   onClickClearFocusLog,
+  onClickRefreshAll,
   logs,
   focusLogs
 }) => {
@@ -118,6 +120,11 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <Button  variant="outlined" size="small"  onClick={onToggleAutoScroll}>
             {isAutoScrollEnabled ? 'Disable Auto-Scroll' : 'Enable Auto-Scroll'}
             </Button>
+        </Box>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 , pb:2}}>
+          <Button variant="outlined" size="small" onClick={onClickRefreshAll} >
+            Refresh highlights on whole sequence
+          </Button>
         </Box>
         <HighLighSettings />
         <RemoveSentenceSettings />

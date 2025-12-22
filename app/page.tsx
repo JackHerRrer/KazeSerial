@@ -98,11 +98,29 @@ export default function Home() {
   };
   const onClickFocusLogs = (id:number) => {
     const list = listRefMain.current;
-    list?.scrollToRow({
-      align: "auto", // optional
-      behavior: "auto", // optional
-      index: id
-    });
+    // Trouver l'index du message dans logs en utilisant son id
+    const index = logs.findIndex(log => log.id === id);
+    
+    if (index !== -1) {
+      const list = listRefMain.current;
+      list?.scrollToRow({
+        align: "center", // Centre l'élément dans la vue
+        behavior: "smooth", // Animation fluide
+        index: index
+      });
+    }
+  };
+  const onClickRefreshAll = () => {
+    let currentLogs = logs;
+    clearFocusLogs();
+    clearLogs();
+    for (let log of currentLogs) {
+      invoke<string[]>("add_logs_line", { line: log.rawline ?? log.message })
+        .then((s) => {
+        }).catch((err: unknown) => {
+          console.error(err);
+        });
+    }
   };
   useEffect(() => {
     if (isAutoScrollEnabled) {
@@ -123,7 +141,7 @@ export default function Home() {
         //console.log(e);
         //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
         let serialMessage: SerialMessage = e.payload;
-        serialMessage.id = addSingleLog(serialMessage);
+        addSingleLog(serialMessage);
         if(e.payload.matched)
         {
           addSingleFocusLog(serialMessage);
@@ -219,6 +237,7 @@ export default function Home() {
               onToggleAutoScroll={() => setIsAutoScrollEnabled(prev => !prev)}
               onClickClearLog={clearLogs}
               onClickClearFocusLog={clearFocusLogs}
+              onClickRefreshAll={onClickRefreshAll}
               logs={logs}
               focusLogs={focusLogs}
             />

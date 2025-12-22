@@ -18,10 +18,14 @@ Since I wanted to learn React, i did this simple project, and of course Copilot 
 - **High-Performance Logging**:
   - Virtualized log list (using `react-window`) to handle large amounts of data efficiently.
   - Auto-scroll with pause-on-hover/scroll-up capability.
+  - Clicking on a row of focus view will scroll the main log view to this element
 - **Advanced Analysis**:
   - **Regex Highlighting**: Define custom regex patterns to highlight specific log messages with custom colors.
   - **Split View**: A secondary "Focus" terminal to isolate matched logs or view different parts of the stream.
-  - **Filtering**: (In progress) Filter logs to reduce noise.
+  - **Sentence removal**: Remove garbage by sentence matching 
+- **Export/import**:
+  - **export**: Export raw log (without highligh and sentence removal applied) to a file
+  - **import**: Re-import previous log file
 - **Cross-Platform**: Runs on Linux and Windows, not tested so far on macOS (powered by Tauri).
 
 ## Tech Stack
