@@ -10,6 +10,7 @@ import HighLighSettings from './HighLighSettings';
 import ButtonGroup from '@mui/material/ButtonGroup';
 import RemoveSentenceSettings from './SentenceRemovalSettings';
 import FileSettings from './FileSettings';
+import { SerialMessage } from '../types/SerialMessage';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -51,6 +52,8 @@ interface ControlPanelProps {
   onToggleAutoScroll: () => void;
   onClickClearLog : () => void;
   onClickClearFocusLog : () => void;
+  logs: SerialMessage[];
+  focusLogs: SerialMessage[];
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -59,7 +62,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isAutoScrollEnabled,
   onToggleAutoScroll,
   onClickClearLog,
-  onClickClearFocusLog
+  onClickClearFocusLog,
+  logs,
+  focusLogs
 }) => {
   const [tabValue, setTabValue] = useState(0);
 
@@ -91,7 +96,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
-        <FileSettings />
+        <FileSettings logs={logs} focusLogs={focusLogs} />
       </TabPanel>
       <Box sx={{ p:3 }}>
         <ButtonGroup variant="outlined" size="small" aria-label="Basic button group" sx={{ pb:2 }}>

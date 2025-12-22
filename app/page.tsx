@@ -207,6 +207,8 @@ export default function Home() {
               onToggleAutoScroll={() => setIsAutoScrollEnabled(prev => !prev)}
               onClickClearLog={clearLogs}
               onClickClearFocusLog={clearFocusLogs}
+              logs={logs}
+              focusLogs={focusLogs}
             />
           </Container>
         </Container>

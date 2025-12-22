@@ -6,8 +6,15 @@ import Button from '@mui/material/Button';
 import { invoke } from "@tauri-apps/api/core";
 import { ButtonGroup } from '@mui/material';
 import { create, writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
-import { open } from '@tauri-apps/plugin-dialog';
-const FileSettings: React.FC = () => {
+import { open , save } from '@tauri-apps/plugin-dialog';
+import { SerialMessage } from '../types/SerialMessage';
+
+interface FileSettingsProps {
+    logs: SerialMessage[];
+    focusLogs: SerialMessage[];
+}
+
+const FileSettings: React.FC<FileSettingsProps> = ({ logs, focusLogs }) => {
     const isCancelled = React.useRef(false);
 
 
@@ -18,9 +25,53 @@ const FileSettings: React.FC = () => {
     }, []);
 
 
-    const handleSaveToFile = () => {
-
-
+    const handleSaveToFile = async () => {
+        let logs_buff :string = "";
+        for(let index in logs){
+            if(logs[index].rawline != undefined){
+                logs_buff += logs[index].rawline + "\n";
+            } else {
+                logs_buff += logs[index].message + "\n";
+            }
+        }
+        const filePath = await save({
+            filters: [{
+            name: 'export',
+            extensions: ['log']
+            }]
+        }).then((path) => {
+            return path;
+        }).catch((err: unknown) => {
+            console.error(err);
+        });
+        if(filePath != undefined)
+        {
+            await writeTextFile(filePath, logs_buff);
+        }
+    };
+    const handleSaveFocusToFile = async () => {
+        let logs_buff :string = "";
+        for(let index in focusLogs){
+            if(focusLogs[index].rawline != undefined){
+                logs_buff += focusLogs[index].rawline + "\n";
+            } else {
+                logs_buff += focusLogs[index].message + "\n";
+            }
+        }
+        const filePath = await save({
+            filters: [{
+            name: 'export',
+            extensions: ['log']
+            }]
+        }).then((path) => {
+            return path;
+        }).catch((err: unknown) => {
+            console.error(err);
+        });
+        if(filePath != undefined)
+        {
+            await writeTextFile(filePath, logs_buff);
+        }
     };
     const loadLogFile = async () => {
         // Open a selection dialog for directories
@@ -48,7 +99,7 @@ const FileSettings: React.FC = () => {
             <Button onClick={handleSaveToFile}>
                     Save logs to file
             </Button>
-            <Button onClick={handleSaveToFile}>
+            <Button onClick={handleSaveFocusToFile}>
                     Save focus logs to file
             </Button>
             <Button onClick={loadLogFile}>
