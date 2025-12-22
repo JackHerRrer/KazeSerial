@@ -19,6 +19,11 @@ const darkTheme = createTheme({
   palette: {
     mode: 'dark',
   },
+  typography: {
+    button: {
+      textTransform: 'none'
+    }
+  }
 });
 
 // Generate fake UART logs

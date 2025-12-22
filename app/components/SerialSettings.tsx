@@ -75,7 +75,7 @@ const SerialSettings: React.FC = () => {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Button variant="contained" color="primary" onClick={listUart}>
+      <Button variant="outlined" size="small" color="primary" onClick={listUart}>
         Detect serial
       </Button>
       <FormControl fullWidth size="small">
@@ -115,7 +115,7 @@ const SerialSettings: React.FC = () => {
           <MenuItem value={921600}>921600</MenuItem>
         </Select>
       </FormControl>
-      <Button variant="contained" color="primary" onClick={handleConnect}>
+      <Button variant="outlined" size="small" color="primary" onClick={handleConnect}>
         
         {isConnected ? 'Disconnect' : 'Connect'}
 

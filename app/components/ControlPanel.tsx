@@ -9,6 +9,7 @@ import Typography from '@mui/material/Typography';
 import SerialSettings from './SerialSettings';
 import HighLighSettings from './HighLighSettings';
 import { invoke } from "@tauri-apps/api/core";
+import ButtonGroup from '@mui/material/ButtonGroup';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -80,10 +81,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       </TabPanel>
       <TabPanel value={tabValue} index={1}>
         <Box sx={{  display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1,  }}>
-          <Button variant="contained" onClick={onAppendLogs}>
+          <Button variant="outlined" size="small" onClick={onAppendLogs}>
             Append 10 Logs
           </Button>
-          <Button variant="contained" onClick={onRegenerateLogs}>
+          <Button variant="outlined" size="small" onClick={onRegenerateLogs}>
             Regenerate Logs
           </Button>
         </Box>
@@ -93,15 +94,20 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         <Typography>File Settings content goes here.</Typography>
       </TabPanel>
       <Box sx={{ p:3 }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 , pb:2}}>
-            <Button variant="contained" onClick={onToggleAutoScroll}>
-            {isAutoScrollEnabled ? 'Disable Auto-Scroll' : 'Enable Auto-Scroll'}
-            </Button>
-            <Button variant="contained" onClick={onClickClearLog}>
+        <ButtonGroup variant="outlined" size="small" aria-label="Basic button group" sx={{ pb:2 }}>
+          <Button onClick={onClickClearLog}>
+            Clear All Logs
+          </Button>
+          <Button onClick={onClickClearLog}>
             Clear Logs
-            </Button>
-            <Button variant="contained" onClick={onClickClearFocusLog}>
+          </Button>
+          <Button onClick={onClickClearFocusLog}>
             Clear Focus Logs
+          </Button>
+        </ButtonGroup>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 , pb:2}}>
+            <Button  variant="outlined" size="small"  onClick={onToggleAutoScroll}>
+            {isAutoScrollEnabled ? 'Disable Auto-Scroll' : 'Enable Auto-Scroll'}
             </Button>
         </Box>
         <HighLighSettings />
