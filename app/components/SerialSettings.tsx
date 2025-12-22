@@ -116,9 +116,7 @@ const SerialSettings: React.FC = () => {
         </Select>
       </FormControl>
       <Button variant="outlined" size="small" color="primary" onClick={handleConnect}>
-        
         {isConnected ? 'Disconnect' : 'Connect'}
-
       </Button>
     </Box>
   );

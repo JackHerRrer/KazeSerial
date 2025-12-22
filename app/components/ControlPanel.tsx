@@ -10,6 +10,8 @@ import SerialSettings from './SerialSettings';
 import HighLighSettings from './HighLighSettings';
 import { invoke } from "@tauri-apps/api/core";
 import ButtonGroup from '@mui/material/ButtonGroup';
+import { Remove } from '@mui/icons-material';
+import RemoveSentenceSettings from './SentenceRemovalSettings';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -111,6 +113,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             </Button>
         </Box>
         <HighLighSettings />
+        <RemoveSentenceSettings />
       </Box>
     </Box>
   );

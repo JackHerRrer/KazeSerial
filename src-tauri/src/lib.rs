@@ -76,7 +76,7 @@ async fn set_highlights(
     let mut hilights_settings: Vec<HighlightSettings> = Vec::new();
     for elem in highlights {
         let text = elem.text.clone();
-        println!("Compiling regex for highlight: {}", text);
+        //println!("Compiling regex for highlight: {}", text);
         let cur_regex = match regex::Regex::new(&text) {
             Ok(reg) => reg,
             Err(err) => {
