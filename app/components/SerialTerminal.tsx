@@ -4,9 +4,10 @@ import React, { type Ref,  type UIEventHandler } from 'react';
 import { List, type ListImperativeAPI } from 'react-window';
 import Box from '@mui/material/Box';
 import RowComponent from './SerialTerminalLine';
+import { SerialMessage } from '../types/SerialMessage';
 
 interface SerialTerminalProps {
-  lines: string[];
+  serial_messages: SerialMessage[];
   height?: number | string;
   width?: number | string;
   listRef?: Ref<ListImperativeAPI>;
@@ -14,7 +15,7 @@ interface SerialTerminalProps {
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
-  lines,
+  serial_messages,
   height = '100%',
   width = '100%',
   listRef,
@@ -37,10 +38,10 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
         <List
           id='SerialLinesList'
           style={{ height, width, paddingBottom:'20px'}}
-          rowCount={lines.length}
+          rowCount={serial_messages.length}
           rowHeight={20}
           rowComponent={RowComponent}
-          rowProps={{ names: lines }} // Pass lines via rowProps
+          rowProps={{ serialMessages: serial_messages }} // Pass serial_messages via rowProps
           overscanCount={10}
           listRef={listRef}
           onScroll={onScroll}

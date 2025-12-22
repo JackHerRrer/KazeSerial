@@ -16,6 +16,7 @@
     "fs:allow-remove",
     "fs:allow-rename",
     "fs:allow-exists",
-    "fs:allow-app-write-recursive"
+    "fs:allow-app-write-recursive",
+    "dialog:default"
   ]
 }

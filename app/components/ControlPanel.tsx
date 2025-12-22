@@ -5,13 +5,11 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
-import Typography from '@mui/material/Typography';
 import SerialSettings from './SerialSettings';
 import HighLighSettings from './HighLighSettings';
-import { invoke } from "@tauri-apps/api/core";
 import ButtonGroup from '@mui/material/ButtonGroup';
-import { Remove } from '@mui/icons-material';
 import RemoveSentenceSettings from './SentenceRemovalSettings';
+import FileSettings from './FileSettings';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -93,7 +91,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
-        <Typography>File Settings content goes here.</Typography>
+        <FileSettings />
       </TabPanel>
       <Box sx={{ p:3 }}>
         <ButtonGroup variant="outlined" size="small" aria-label="Basic button group" sx={{ pb:2 }}>

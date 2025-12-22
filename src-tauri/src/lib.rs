@@ -27,6 +27,7 @@ struct HighlightSettings {
 struct Payload {
     message: String,
     matched: bool,
+    rawline: Option<String>,
 }
 
 #[derive(Clone)]
@@ -36,35 +37,55 @@ struct AppState {
     removes: Arc<Mutex<Vec<String>>>,
 }
 #[tauri::command]
-async fn add_logs_line(
-    line: String,
-    emitter: tauri::AppHandle,
-) -> Result<(), String> {
+async fn add_logs_line(line: String, emitter: tauri::AppHandle) -> Result<(), String> {
     let mut matched: bool = false;
     let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
     let removes_vec = emitter.state::<AppState>().removes.lock().await.clone();
     let app_handle = emitter.clone();
     let mut line = line;
+    let rawline = line.clone();
+    let mut should_send_raw = false;
     // Applique la suppression des chaînes avant le surlignage
     for rm in &removes_vec {
         if !rm.is_empty() && line.contains(rm) {
             line = line.replace(rm, "");
+            should_send_raw = true;
         }
     }
     // Applique le surlignage côté Rust
     for hl in &highlights_vec {
         if !hl.text.is_empty() && hl.regex.is_match(&line) {
-            line = hl.regex.replace_all(&line, format!("<span style=\"color:{};\">$0</span>", hl.color)).to_string();
+            line = hl
+                .regex
+                .replace_all(
+                    &line,
+                    format!("<span style=\"color:{};\">$0</span>", hl.color),
+                )
+                .to_string();
             matched = true;
+            should_send_raw = true;
         }
     }
-    let _ = app_handle.emit(
-        "serial-data",
-        Payload {
-            message: line,
-            matched: matched,
-        },
-    );
+    if should_send_raw {
+        let _ = app_handle.emit(
+            "serial-data",
+            Payload {
+                message: line,
+                matched: matched,
+                rawline: Some(rawline)
+            },
+        );
+    }else{
+        let _ = app_handle.emit(
+            "serial-data",
+            Payload {
+                message: line,
+                matched: matched,
+                rawline:None
+            },
+        );
+    }
+
     Ok(())
 }
 
@@ -114,12 +135,12 @@ async fn set_removes(
 
 #[tauri::command]
 async fn list_ports() -> Result<Vec<String>, String> {
-  println!("Listing ports...");
+    println!("Listing ports...");
     match serialport::available_ports() {
         Ok(ports) => {
-          println!("Listing ports... {:?}",ports);
-          Ok(ports.into_iter().map(|p| p.port_name).collect())
-        },
+            println!("Listing ports... {:?}", ports);
+            Ok(ports.into_iter().map(|p| p.port_name).collect())
+        }
         Err(e) => Err(format!("Failed to list ports: {}", e)),
     }
 }
@@ -149,15 +170,17 @@ async fn open_port(
                         }
                         match port.read(&mut temp) {
                             Ok(1) => {
-                                
-                                if temp[0] != b'\r' && temp[0] != b'\n' && temp[0].is_ascii() == false
+                                if temp[0] != b'\r'
+                                    && temp[0] != b'\n'
+                                    && temp[0].is_ascii() == false
                                 {
-                                    let test = format!("{:#02x} ",&temp[0]);
+                                    let test = format!("{:#02x} ", &temp[0]);
                                     let _ = app_handle.emit(
                                         "serial-data",
                                         Payload {
                                             message: test,
                                             matched: false,
+                                            rawline:None
                                         },
                                     );
                                     continue;
@@ -219,7 +242,9 @@ pub fn run() {
         highlights: Arc::new(Mutex::new(Vec::new())),
         removes: Arc::new(Mutex::new(Vec::new())),
     };
-    let builder = tauri::Builder::default().plugin(tauri_plugin_fs::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init());
 
     builder
         .setup(|app| {

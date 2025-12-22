@@ -12,7 +12,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from "@tauri-apps/api/core";
 import Typography from '@mui/material/Typography';
-
+import { SerialMessage } from './types/SerialMessage';
 let currentTime = 0;
 
 const darkTheme = createTheme({
@@ -48,7 +48,7 @@ const generateLogs = (count: number) => {
 
     invoke<string[]>("add_logs_line", { line: `${timestamp} ${message}` })
         .then((s) => {
-            console.log("port opened:", s);
+            //console.log("port opened:", s);
         }).catch((err: unknown) => {
             console.error(err);
         });
@@ -56,19 +56,15 @@ const generateLogs = (count: number) => {
 };
 
 const serialUart = ['UART0', 'UART1', 'UART2', 'UART3'];
-const initialLogs: string[] = [];
+const initialLogs: SerialMessage[] = [];
 
-type SerialMessage = {
-  message: string;
-  matched: boolean;
-};
 
 export default function Home() {
   const listRefMain = useRef<ListImperativeAPI>(null!);
   const listRefFocus = useRef<ListImperativeAPI>(null!);
   
-  const [logs, setLogs] = useState<string[]>(initialLogs);
-  const [focusLogs, setFocusLogs] = useState<string[]>(initialLogs);
+  const [logs, setLogs] = useState<SerialMessage[]>(initialLogs);
+  const [focusLogs, setFocusLogs] = useState<SerialMessage[]>(initialLogs);
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
 
 
@@ -76,12 +72,12 @@ export default function Home() {
     generateLogs(count);
   };
 
-  const addSingleLog = (log: string) => {
+  const addSingleLog = (log: SerialMessage) => {
     let tmpArr = [log];
     setLogs(prevLogs => [...prevLogs, ...tmpArr]);
   };
 
-  const addSingleFocusLog = (log: string) => {
+  const addSingleFocusLog = (log: SerialMessage) => {
     let tmpArr = [log];
     setFocusLogs(prevLogs => [...prevLogs, ...tmpArr]);
   };
@@ -90,11 +86,11 @@ export default function Home() {
     generateLogs(10);
   };
   const clearLogs = () => {
-    let tmpArr: string[] = [];
+    let tmpArr: SerialMessage[] = [];
     setLogs(tmpArr);
   };
   const clearFocusLogs = () => {
-    let tmpArr: string[] = [];
+    let tmpArr: SerialMessage[] = [];
     setFocusLogs(tmpArr);
   };
   useEffect(() => {
@@ -113,12 +109,13 @@ export default function Home() {
   useEffect(() => {
       //listen to a event
       const unlisten = listen<SerialMessage>("serial-data", (e) => {
- //       console.log(e);
-//        console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
-        addSingleLog(e.payload.message);
+        //console.log(e);
+        //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
+        let serialMessage: SerialMessage = e.payload;
+        addSingleLog(serialMessage);
         if(e.payload.matched)
         {
-          addSingleFocusLog(e.payload.message);
+          addSingleFocusLog(serialMessage);
         }
       });
 
@@ -174,7 +171,7 @@ export default function Home() {
                 }}
                 >
                   <SerialTerminal
-                    lines={logs}
+                    serial_messages={logs}
                     listRef={listRefMain}
                     onScroll={handleScroll(listRefMain)}
                   />
@@ -193,7 +190,7 @@ export default function Home() {
             </Typography>
               <Box sx={{ flexGrow: 1,  minHeight: '10%' }}>
                 <SerialTerminal
-                  lines={focusLogs}
+                  serial_messages={focusLogs}
                   listRef={listRefFocus}
                   onScroll={handleScroll(listRefFocus)}
                 />

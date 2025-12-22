@@ -2,15 +2,16 @@
 
 import { type RowComponentProps } from "react-window";
 import Typography from '@mui/material/Typography';
+import { SerialMessage } from "../types/SerialMessage";
 
 export default function RowComponent({
   index,
-  names,
+  serialMessages,
   style
 }: RowComponentProps<{
-  names: string[];
+  serialMessages: SerialMessage[];
 }>) {
-  const line = names[index];
+  const line = serialMessages[index];
   return (
     <div style={{ ...style, whiteSpace: 'pre' }}>
       <Typography
@@ -21,7 +22,7 @@ export default function RowComponent({
           color: '#d4d4d4',
           lineHeight: 1.2,
         }}
-        dangerouslySetInnerHTML={{ __html: line }}
+        dangerouslySetInnerHTML={{ __html: line.message }}
       >
       </Typography>
     </div>
