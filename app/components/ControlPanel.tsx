@@ -71,6 +71,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
   };
+  const onClearAllLogs = useCallback(() => {
+    onClickClearLog();
+    onClickClearFocusLog();
+  }, [onClickClearLog, onClickClearFocusLog]);
 
   return (
     <Box sx={{ width: '100%', borderLeft: '1px solid #333' }}>
@@ -100,7 +104,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       </TabPanel>
       <Box sx={{ p:3 }}>
         <ButtonGroup variant="outlined" size="small" aria-label="Basic button group" sx={{ pb:2 }}>
-          <Button onClick={onClickClearLog}>
+          <Button onClick={onClearAllLogs}>
             Clear All Logs
           </Button>
           <Button onClick={onClickClearLog}>

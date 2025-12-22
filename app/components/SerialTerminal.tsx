@@ -12,6 +12,7 @@ interface SerialTerminalProps {
   width?: number | string;
   listRef?: Ref<ListImperativeAPI>;
   onScroll: UIEventHandler<HTMLDivElement>;
+  onClickRow?: (message_id: number) => void;
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
@@ -20,6 +21,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   width = '100%',
   listRef,
   onScroll,
+  onClickRow,
 }) => {
 
   return (
@@ -41,7 +43,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
           rowCount={serial_messages.length}
           rowHeight={20}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages }} // Pass serial_messages via rowProps
+          rowProps={{ serialMessages: serial_messages, onClickRow}} // Pass serial_messages via rowProps
           overscanCount={10}
           listRef={listRef}
           onScroll={onScroll}

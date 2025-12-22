@@ -93,6 +93,9 @@ export default function Home() {
     let tmpArr: SerialMessage[] = [];
     setFocusLogs(tmpArr);
   };
+  const onClickFocusLogs = (id:number) => {
+    console.log('click log id:', id);
+  };
   useEffect(() => {
     if (isAutoScrollEnabled) {
       if (listRefMain.current) {
@@ -193,6 +196,7 @@ export default function Home() {
                   serial_messages={focusLogs}
                   listRef={listRefFocus}
                   onScroll={handleScroll(listRefFocus)}
+                  onClickRow={onClickFocusLogs}
                 />
               </Box>
             </Container>

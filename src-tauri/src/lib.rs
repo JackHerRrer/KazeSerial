@@ -4,6 +4,8 @@ use serialport::SerialPort;
 use std::{fs, sync::Arc};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 #[derive(Clone, serde::Deserialize)]
 struct RemoveMessage {
@@ -25,6 +27,7 @@ struct HighlightSettings {
 }
 #[derive(Clone, serde::Serialize)]
 struct Payload {
+    id : u64,
     message: String,
     matched: bool,
     rawline: Option<String>,
@@ -35,12 +38,14 @@ struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     removes: Arc<Mutex<Vec<String>>>,
+    message_id_counter: Arc<AtomicU64>,
 }
 #[tauri::command]
 async fn add_logs_line(line: String, emitter: tauri::AppHandle) -> Result<(), String> {
     let mut matched: bool = false;
     let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
     let removes_vec = emitter.state::<AppState>().removes.lock().await.clone();
+    let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
     let app_handle = emitter.clone();
     let mut line = line;
     let rawline = line.clone();
@@ -70,6 +75,7 @@ async fn add_logs_line(line: String, emitter: tauri::AppHandle) -> Result<(), St
         let _ = app_handle.emit(
             "serial-data",
             Payload {
+                id:message_id,
                 message: line,
                 matched: matched,
                 rawline: Some(rawline)
@@ -79,6 +85,7 @@ async fn add_logs_line(line: String, emitter: tauri::AppHandle) -> Result<(), St
         let _ = app_handle.emit(
             "serial-data",
             Payload {
+                id:message_id,
                 message: line,
                 matched: matched,
                 rawline:None
@@ -174,10 +181,12 @@ async fn open_port(
                                     && temp[0] != b'\n'
                                     && temp[0].is_ascii() == false
                                 {
+                                    let message_id = app_handle.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
                                     let test = format!("{:#02x} ", &temp[0]);
                                     let _ = app_handle.emit(
                                         "serial-data",
                                         Payload {
+                                            id:message_id,
                                             message: test,
                                             matched: false,
                                             rawline:None
@@ -241,6 +250,7 @@ pub fn run() {
         serial_connection: Arc::new(Mutex::new(None)),
         highlights: Arc::new(Mutex::new(Vec::new())),
         removes: Arc::new(Mutex::new(Vec::new())),
+        message_id_counter: Arc::new(AtomicU64::new(1)),
     };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

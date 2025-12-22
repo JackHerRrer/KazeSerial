@@ -7,13 +7,18 @@ import { SerialMessage } from "../types/SerialMessage";
 export default function RowComponent({
   index,
   serialMessages,
-  style
+  style,
+  onClickRow,
 }: RowComponentProps<{
   serialMessages: SerialMessage[];
+  onClickRow?: (message_id: number) => void;
 }>) {
   const line = serialMessages[index];
   return (
-    <div style={{ ...style, whiteSpace: 'pre' }}>
+    <div
+      style={{ ...style, whiteSpace: 'pre' }}
+      onClick={onClickRow ? () => onClickRow(line.id) : undefined}
+    >
       <Typography
         component="span"
         sx={{
