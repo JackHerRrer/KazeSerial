@@ -32,11 +32,11 @@ const generateLogs = (count: number) => {
     
     const type = Math.random();
     if (type < 0.1) {
-      message = `ERROR: Connection timeout at address 0x${Math.floor(Math.random() * 0xffff).toString(16)}`;
+      message = `ERROR: Connection timeout at address 0x${Math.floor(Math.random() * 0xffff).toString(16)}                                                                                                        00000000`;
     } else if (type < 0.3) {
-      message = `WARN: Retrying packet ${i}...`;
+      message = `WARN: Retrying packet ${i}...                                                                                                          00000000`;
     } else if (type < 0.6) {
-      message = `INFO: Received packet len=${Math.floor(Math.random() * 100)} flags=0x${Math.floor(Math.random() * 0xff).toString(16)}`;
+      message = `INFO: Received packet len=${Math.floor(Math.random() * 100)} flags=0x${Math.floor(Math.random() * 0xff).toString(16)}                                                                                                          00000000`;
     } else {
       message = `DEBUG: Processing data chunk ${i} state=${Math.floor(Math.random() * 5)}`;
     }

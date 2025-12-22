@@ -12,7 +12,7 @@ export default function RowComponent({
 }>) {
   const line = names[index];
   return (
-    <div style={{ ...style, whiteSpace: 'pre-wrap' }}>
+    <div style={{ ...style, whiteSpace: 'pre' }}>
       <Typography
         component="span"
         sx={{

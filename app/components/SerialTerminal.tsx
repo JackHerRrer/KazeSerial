@@ -35,7 +35,8 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
       }}
     >
         <List
-          style={{ height, width }}
+          id='SerialLinesList'
+          style={{ height, width, paddingBottom:'20px'}}
           rowCount={lines.length}
           rowHeight={20}
           rowComponent={RowComponent}
