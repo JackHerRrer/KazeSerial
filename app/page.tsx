@@ -3,15 +3,15 @@
 import React, { useState, useRef, useEffect, type SyntheticEvent} from 'react';
 import Container from '@mui/material/Container';
 import Box from '@mui/material/Box';
-import SerialTerminal from './components/SerialTerminal';
 import { Resizable } from 're-resizable';
 import type { ListImperativeAPI } from 'react-window';
-import ControlPanel from './components/ControlPanel';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from "@tauri-apps/api/core";
 import Typography from '@mui/material/Typography';
+import ControlPanel from './components/ControlPanel';
+import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
 let currentTime = 0;
 
@@ -27,7 +27,7 @@ const darkTheme = createTheme({
 });
 
 // Generate fake UART logs
-const generateLogs = (count: number) => {
+const generateLogs = (count: number) =>  {
   const logs = [];
 
   for (let i = 0; i < count; i++) {
@@ -45,14 +45,10 @@ const generateLogs = (count: number) => {
     } else {
       message = `DEBUG: Processing data chunk ${i} state=${Math.floor(Math.random() * 5)}`;
     }
-
-    invoke<string[]>("add_logs_line", { line: `${timestamp} ${message}` })
-        .then((s) => {
-            //console.log("port opened:", s);
-        }).catch((err: unknown) => {
-            console.error(err);
-        });
+    logs.push(`${timestamp} ${message}`);
   }
+  return logs;
+
 };
 
 const serialUart = ['UART0', 'UART1', 'UART2', 'UART3'];
@@ -69,7 +65,18 @@ export default function Home() {
 
 
   const appendLogs = (count: number) => {
-    generateLogs(count);
+    let newLogs :String[] = generateLogs(count);
+    let logs_string:String[] = [];
+    for (let log of logs) {
+      logs_string.push(log.rawline ?? log.message);
+    }
+    let fulllogs = logs_string.concat(newLogs);
+    invoke<string[]>("add_logs_line", { lines: fulllogs })
+    .then((s) => {
+        //console.log("port opened:", s);
+    }).catch((err: unknown) => {
+        console.error(err);
+    });
   };
 
   const addSingleLog = (log: SerialMessage) => {
@@ -86,7 +93,13 @@ export default function Home() {
   };
   const regenerateLogs = () => {
     currentTime = 0; // Reset time for new logs
-    generateLogs(10);
+    let logs :String[] = generateLogs(10);
+    invoke<string[]>("add_logs_line", { lines: logs })
+    .then((s) => {
+        //console.log("port opened:", s);
+    }).catch((err: unknown) => {
+        console.error(err);
+    });
   };
   const clearLogs = () => {
     let tmpArr: SerialMessage[] = [];
@@ -114,13 +127,15 @@ export default function Home() {
     let currentLogs = logs;
     clearFocusLogs();
     clearLogs();
+    let logs_string:String[] = [];
     for (let log of currentLogs) {
-      invoke<string[]>("add_logs_line", { line: log.rawline ?? log.message })
-        .then((s) => {
-        }).catch((err: unknown) => {
-          console.error(err);
-        });
+      logs_string.push(log.rawline ?? log.message);
     }
+    invoke<string[]>("add_logs_line", { lines: logs_string })
+      .then((s) => {
+      }).catch((err: unknown) => {
+        console.error(err);
+      });
   };
   useEffect(() => {
     if (isAutoScrollEnabled) {
@@ -137,7 +152,7 @@ export default function Home() {
 
   useEffect(() => {
       //listen to a event
-      const unlisten = listen<SerialMessage>("serial-data", (e) => {
+      const unlisten_serial_data = listen<SerialMessage>("serial-data", (e) => {
         //console.log(e);
         //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
         let serialMessage: SerialMessage = e.payload;
@@ -147,9 +162,23 @@ export default function Home() {
           addSingleFocusLog(serialMessage);
         }
       });
+      //listen to a event
+      const unlisten_serial_datas = listen<SerialMessage[]>("serial-datas", (e) => {
+        //console.log(e);
+        //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
+        let serialMessages: SerialMessage[] = e.payload;
+        setLogs(serialMessages)
+      });
+      const unlisten_serial_datas_focus = listen<SerialMessage[]>("serial-datas-focus", (e) => {
+        //console.log(e);
+        //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
+        let serialMessages: SerialMessage[] = e.payload;
+        setFocusLogs(serialMessages)
+      });
 
       return () => {
-        unlisten.then(f => f());
+        unlisten_serial_data.then(f => f());
+        unlisten_serial_datas.then(f => f());
       }
     }, [] );
 
@@ -231,7 +260,7 @@ export default function Home() {
           <Container disableGutters sx={{ height: '100vh' }}>
             {/* Control Panel */}
             <ControlPanel 
-              onAppendLogs={() => appendLogs(10)}
+              onAppendLogs={() => appendLogs(10000)}
               onRegenerateLogs={regenerateLogs}
               isAutoScrollEnabled={isAutoScrollEnabled}
               onToggleAutoScroll={() => setIsAutoScrollEnabled(prev => !prev)}

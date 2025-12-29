@@ -40,17 +40,15 @@ struct AppState {
     removes: Arc<Mutex<Vec<String>>>,
     message_id_counter: Arc<AtomicU64>,
 }
-#[tauri::command]
-async fn add_logs_line(line: String, emitter: tauri::AppHandle) -> Result<(), String> {
-    let mut matched: bool = false;
+
+async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Payload, bool) {
     let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
     let removes_vec = emitter.state::<AppState>().removes.lock().await.clone();
     let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
-    let app_handle = emitter.clone();
-    let mut line = line;
-    let rawline = line.clone();
+    let rawline = input_line.clone();
+    let mut line = input_line;
+    let mut matched = false;
     let mut should_send_raw = false;
-    // Applique la suppression des chaînes avant le surlignage
     for rm in &removes_vec {
         if !rm.is_empty() && line.contains(rm) {
             line = line.replace(rm, "");
@@ -72,27 +70,49 @@ async fn add_logs_line(line: String, emitter: tauri::AppHandle) -> Result<(), St
         }
     }
     if should_send_raw {
-        let _ = app_handle.emit(
-            "serial-data",
-            Payload {
-                id:message_id,
-                message: line,
-                matched: matched,
-                rawline: Some(rawline)
-            },
-        );
+        return (Payload {
+            id: message_id,
+            message: line,
+            matched,
+            rawline:Some(rawline)
+        }, should_send_raw);
     }else{
-        let _ = app_handle.emit(
-            "serial-data",
-            Payload {
-                id:message_id,
-                message: line,
-                matched: matched,
-                rawline:None
-            },
-        );
+        return (Payload {
+            id: message_id,
+            message: line,
+            matched,
+            rawline:None
+        }, should_send_raw);
+    }
+}
+
+#[tauri::command]
+async fn add_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
+
+    let app_handle = emitter.clone();
+    let mut logs_line: Vec<Payload> = Vec::new();
+    let mut logs_line_focus: Vec<Payload> = Vec::new();
+    // Applique la suppression des chaînes avant le surlignage
+    for line in lines{
+        let should_send_raw ;
+        let cur_payload: Payload;
+        (cur_payload,should_send_raw) = parse_log_line(line.clone(), app_handle.clone()).await;
+        if should_send_raw {
+            logs_line.push(cur_payload.clone());
+            logs_line_focus.push(cur_payload);
+        }else{
+            logs_line.push(cur_payload);
+        }
     }
 
+    let _ = app_handle.emit(
+        "serial-datas",
+        logs_line,
+    );
+    let _ = app_handle.emit(
+        "serial-datas-focus",
+        logs_line_focus,
+    );
     Ok(())
 }
 
@@ -207,8 +227,13 @@ async fn open_port(
                                     //let s = String::from_utf8_lossy(&line_buffer);
                                     //let mut line = regex_eol.replace_all(&s, "").to_string();
                                     let line = String::from_utf8_lossy(&line_buffer).to_string();
-                                    // Applique la suppression des chaînes avant le surlignage
-                                    let _ = add_logs_line(line.clone(), app_handle.clone()).await;
+                                    let should_send_raw: bool;
+                                    let cur_payload: Payload;
+                                    (cur_payload,should_send_raw) = parse_log_line(line.clone(), app_handle.clone()).await;
+                                    let _ = app_handle.emit(
+                                        "serial-data",
+                                        cur_payload,
+                                    );
                                     line_buffer.clear();
                                 }
                             }
