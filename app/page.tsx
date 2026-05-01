@@ -10,6 +10,8 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from "@tauri-apps/api/core";
 import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
@@ -228,11 +230,34 @@ export default function Home() {
                   height: '70%',
                 }}
                 >
+                <Box sx={{ height: '100%', position: 'relative' }}>
+                  <IconButton
+                    aria-label="clear logs"
+                    size="medium"
+                    color="inherit"
+                    onClick={clearLogs}
+                    sx={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 28,
+                      zIndex: 2,
+                      width: 36,
+                      height: 36,
+                      border: '1px solid #333',
+                      bgcolor: 'rgba(30, 30, 30, 0.75)',
+                      '&:hover': {
+                        bgcolor: 'rgba(30, 30, 30, 0.95)',
+                      },
+                    }}
+                  >
+                    <DeleteOutlineIcon fontSize="medium" />
+                  </IconButton>
                   <SerialTerminal
                     serial_messages={logs}
                     listRef={listRefMain}
                     onScroll={handleScroll(listRefMain)}
                   />
+                </Box>
               </Resizable>
               {/* Focus Serial Terminal */}
               <Typography
