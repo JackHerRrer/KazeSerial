@@ -19,6 +19,7 @@ interface HighligtConfig {
   text: string;
   color: string;
   is_regex: boolean;
+  whole_line: boolean;
 }
 
 
@@ -71,7 +72,7 @@ const HighLighSettings: React.FC = () => {
             const result = await readTextFile(filePath, { baseDir: BaseDirectory.AppConfig });
             const highlights = JSON.parse(result);
             let tmpArr: HighligtConfig[] = [];
-            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color, is_regex: h.is_regex ?? true }));
+            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color, is_regex: h.is_regex ?? true, whole_line: h.whole_line ?? false }));
             setHighlights(tmpArr);
         } catch (e) {
             console.log('Erreur lors du chargement : ' + e);
@@ -83,10 +84,10 @@ const HighLighSettings: React.FC = () => {
     }, []);
     const handleAddHighlight = async () => {
         if(highlights == undefined) {
-            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true }]);
+            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false }]);
             return;
         };
-        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true }]);
+        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false }]);
     };
 
     const handleRemoveHighlight = (id: number) => {
@@ -102,6 +103,11 @@ const HighLighSettings: React.FC = () => {
     const handleHighlightIsRegexChange = (id: number, value: boolean) => {
         if(highlights == undefined) return;
         setHighlights(highlights.map(f => f.id === id ? { ...f, is_regex: value } : f));
+    };
+
+    const handleHighlightWholeLineChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => f.id === id ? { ...f, whole_line: value } : f));
     };
 
     return (
@@ -132,6 +138,13 @@ const HighLighSettings: React.FC = () => {
                 size="small"
                 checked={filter.is_regex}
                 onChange={(e) => handleHighlightIsRegexChange(filter.id, e.target.checked)}
+              />
+            </Tooltip>
+            <Tooltip title="Whole line">
+              <Checkbox
+                size="small"
+                checked={filter.whole_line}
+                onChange={(e) => handleHighlightWholeLineChange(filter.id, e.target.checked)}
               />
             </Tooltip>
             <IconButton size="small" onClick={() => handleRemoveHighlight(filter.id)}>

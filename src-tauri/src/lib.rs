@@ -17,6 +17,7 @@ struct HighlightMessage {
     text: String,
     color: String,
     is_regex: bool,
+    whole_line: bool,
 }
 
 #[derive(Clone)]
@@ -25,6 +26,7 @@ struct HighlightSettings {
     text: String,
     color: String,
     is_regex: bool,
+    whole_line: bool,
     regex: Option<Regex>,
 }
 #[derive(Clone, serde::Serialize)]
@@ -60,24 +62,29 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Paylo
     // Applique le surlignage côté Rust
     for hl in &highlights_vec {
         if !hl.text.is_empty() {
-            if hl.is_regex {
-                if let Some(ref regex) = hl.regex {
-                    if regex.is_match(&line) {
+            let does_match = if hl.is_regex {
+                hl.regex.as_ref().map_or(false, |r| r.is_match(&line))
+            } else {
+                line.contains(&hl.text as &str)
+            };
+            if does_match {
+                if hl.whole_line {
+                    line = format!("<span style=\"color:{}\">{}</span>", hl.color, line);
+                } else if hl.is_regex {
+                    if let Some(ref regex) = hl.regex {
                         line = regex
                             .replace_all(
                                 &line,
                                 format!("<span style=\"color:{};\">$0</span>", hl.color),
                             )
                             .to_string();
-                        matched = true;
-                        should_send_raw = true;
                     }
+                } else {
+                    line = line.replace(
+                        &hl.text as &str,
+                        &format!("<span style=\"color:{}\">{}</span>", hl.color, hl.text),
+                    );
                 }
-            } else if line.contains(&hl.text as &str) {
-                line = line.replace(
-                    &hl.text as &str,
-                    &format!("<span style=\"color:{}\">{}</span>", hl.color, hl.text),
-                );
                 matched = true;
                 should_send_raw = true;
             }
@@ -154,6 +161,7 @@ async fn set_highlights(
             text: elem.text,
             color: elem.color,
             is_regex: elem.is_regex,
+            whole_line: elem.whole_line,
             regex: cur_regex,
         });
     }
