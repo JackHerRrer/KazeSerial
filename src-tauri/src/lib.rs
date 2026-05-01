@@ -1,11 +1,26 @@
 use regex::Regex;
 use serialport::{SerialPort, SerialPortType};
 
+use std::collections::HashSet;
 use std::{fs, sync::Arc};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HighlightSelectMode {
+    Match,
+    WholeLine,
+    Custom,
+}
+
+impl Default for HighlightSelectMode {
+    fn default() -> Self {
+        Self::Match
+    }
+}
 
 #[derive(Clone, serde::Deserialize)]
 struct HighlightMessage {
@@ -13,6 +28,11 @@ struct HighlightMessage {
     text: String,
     color: String,
     is_regex: bool,
+    #[serde(default)]
+    select_mode: HighlightSelectMode,
+    #[serde(default)]
+    custom_select: String,
+    #[serde(default)]
     whole_line: bool,
     focus: bool,
     remove: bool,
@@ -24,7 +44,8 @@ struct HighlightSettings {
     text: String,
     color: String,
     is_regex: bool,
-    whole_line: bool,
+    select_mode: HighlightSelectMode,
+    custom_groups: Vec<usize>,
     focus: bool,
     remove: bool,
     regex: Option<Regex>,
@@ -52,6 +73,121 @@ struct AppState {
     message_id_counter: Arc<AtomicU64>,
 }
 
+fn parse_custom_groups(custom_select: &str) -> Vec<usize> {
+    let mut seen = HashSet::new();
+    custom_select
+        .split(',')
+        .filter_map(|part| part.trim().parse::<usize>().ok())
+        .filter(|idx| *idx > 0)
+        .filter(|idx| seen.insert(*idx))
+        .collect()
+}
+
+fn normalize_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    spans.retain(|(start, end)| start < end);
+    spans.sort_by_key(|(start, end)| (*start, *end));
+
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in spans {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                if end > last.1 {
+                    last.1 = end;
+                }
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    merged
+}
+
+fn collect_selected_group_spans(
+    captures: &regex::Captures<'_>,
+    selected_groups: &[usize],
+) -> Vec<(usize, usize)> {
+    let Some(whole_match) = captures.get(0) else {
+        return Vec::new();
+    };
+    let match_start = whole_match.start();
+
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for group_idx in selected_groups {
+        if let Some(group_match) = captures.get(*group_idx) {
+            if group_match.start() >= match_start && group_match.end() <= whole_match.end() {
+                spans.push((
+                    group_match.start() - match_start,
+                    group_match.end() - match_start,
+                ));
+            }
+        }
+    }
+    normalize_spans(spans)
+}
+
+fn build_highlighted_segment(segment: &str, spans: &[(usize, usize)], color: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0usize;
+
+    for (start, end) in spans {
+        output.push_str(&segment[cursor..*start]);
+        output.push_str(&format!("<span style=\"color:{};\">", color));
+        output.push_str(&segment[*start..*end]);
+        output.push_str("</span>");
+        cursor = *end;
+    }
+
+    output.push_str(&segment[cursor..]);
+    output
+}
+
+fn build_removed_segment(segment: &str, spans: &[(usize, usize)]) -> String {
+    let mut output = String::new();
+    let mut cursor = 0usize;
+
+    for (start, end) in spans {
+        output.push_str(&segment[cursor..*start]);
+        cursor = *end;
+    }
+
+    output.push_str(&segment[cursor..]);
+    output
+}
+
+fn highlight_custom_regex_match(
+    captures: &regex::Captures<'_>,
+    color: &str,
+    selected_groups: &[usize],
+) -> String {
+    let Some(whole_match) = captures.get(0) else {
+        return String::new();
+    };
+
+    let segment = whole_match.as_str();
+    let mut spans = collect_selected_group_spans(captures, selected_groups);
+
+    if spans.is_empty() {
+        spans.push((0, segment.len()));
+    }
+
+    build_highlighted_segment(segment, &spans, color)
+}
+
+fn remove_custom_regex_match(captures: &regex::Captures<'_>, selected_groups: &[usize]) -> String {
+    let Some(whole_match) = captures.get(0) else {
+        return String::new();
+    };
+
+    let segment = whole_match.as_str();
+    let spans = collect_selected_group_spans(captures, selected_groups);
+
+    if spans.is_empty() {
+        return String::new();
+    }
+
+    build_removed_segment(segment, &spans)
+}
+
 async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payload {
     let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
     let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
@@ -70,29 +206,51 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
             };
             if does_match {
                 if hl.remove {
-                    if hl.whole_line {
+                    if hl.select_mode == HighlightSelectMode::WholeLine {
                         line.clear();
                         removed_line = true;
                         should_send_raw = true;
                         break;
-                    } else if hl.is_regex {
+                    }
+
+                    if hl.is_regex {
                         if let Some(ref regex) = hl.regex {
-                            line = regex.replace_all(&line, "").to_string();
+                            if hl.select_mode == HighlightSelectMode::Custom {
+                                line = regex
+                                    .replace_all(&line, |captures: &regex::Captures<'_>| {
+                                        remove_custom_regex_match(captures, &hl.custom_groups)
+                                    })
+                                    .to_string();
+                            } else {
+                                line = regex.replace_all(&line, "").to_string();
+                            }
                         }
                     } else {
                         line = line.replace(&hl.text as &str, "");
                     }
                 } else {
-                    if hl.whole_line {
+                    if hl.select_mode == HighlightSelectMode::WholeLine {
                         line = format!("<span style=\"color:{}\">{}</span>", hl.color, line);
                     } else if hl.is_regex {
                         if let Some(ref regex) = hl.regex {
-                            line = regex
-                                .replace_all(
-                                    &line,
-                                    format!("<span style=\"color:{};\">$0</span>", hl.color),
-                                )
-                                .to_string();
+                            if hl.select_mode == HighlightSelectMode::Custom {
+                                line = regex
+                                    .replace_all(&line, |captures: &regex::Captures<'_>| {
+                                        highlight_custom_regex_match(
+                                            captures,
+                                            &hl.color,
+                                            &hl.custom_groups,
+                                        )
+                                    })
+                                    .to_string();
+                            } else {
+                                line = regex
+                                    .replace_all(
+                                        &line,
+                                        format!("<span style=\"color:{};\">$0</span>", hl.color),
+                                    )
+                                    .to_string();
+                            }
                         }
                     } else {
                         line = line.replace(
@@ -172,12 +330,30 @@ async fn set_highlights(
         } else {
             None
         };
+
+        let mut select_mode = if elem.whole_line {
+            HighlightSelectMode::WholeLine
+        } else {
+            elem.select_mode
+        };
+
+        if !elem.is_regex && select_mode == HighlightSelectMode::Custom {
+            select_mode = HighlightSelectMode::Match;
+        }
+
+        let custom_groups = if elem.is_regex && select_mode == HighlightSelectMode::Custom {
+            parse_custom_groups(&elem.custom_select)
+        } else {
+            Vec::new()
+        };
+
         hilights_settings.push(HighlightSettings {
             _id: elem.id,
             text: elem.text,
             color: elem.color,
             is_regex: elem.is_regex,
-            whole_line: elem.whole_line,
+            select_mode,
+            custom_groups,
             focus: if elem.remove { false } else { elem.focus },
             remove: elem.remove,
             regex: cur_regex,
