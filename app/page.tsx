@@ -271,7 +271,28 @@ export default function Home() {
             >
               {"focus"}
             </Typography>
-              <Box sx={{ flexGrow: 1,  minHeight: '10%' }}>
+              <Box sx={{ flexGrow: 1, minHeight: '10%', position: 'relative' }}>
+                <IconButton
+                  aria-label="clear focus logs"
+                  size="medium"
+                  color="inherit"
+                  onClick={clearFocusLogs}
+                  sx={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 28,
+                    zIndex: 2,
+                    width: 36,
+                    height: 36,
+                    border: '1px solid #333',
+                    bgcolor: 'rgba(30, 30, 30, 0.75)',
+                    '&:hover': {
+                      bgcolor: 'rgba(30, 30, 30, 0.95)',
+                    },
+                  }}
+                >
+                  <DeleteOutlineIcon fontSize="medium" />
+                </IconButton>
                 <SerialTerminal
                   serial_messages={focusLogs}
                   listRef={listRefFocus}
