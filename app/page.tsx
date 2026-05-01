@@ -13,6 +13,7 @@ import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
@@ -294,6 +295,23 @@ export default function Home() {
                       }}
                     >
                       <KeyboardArrowDownIcon fontSize="medium" />
+                    </IconButton>
+                    <IconButton
+                      aria-label="refresh logs"
+                      size="medium"
+                      color="inherit"
+                      onClick={onClickRefreshAll}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <RefreshIcon fontSize="medium" />
                     </IconButton>
                   <IconButton
                     aria-label="clear logs"
