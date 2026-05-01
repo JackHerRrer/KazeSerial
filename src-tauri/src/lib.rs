@@ -16,6 +16,7 @@ struct HighlightMessage {
     id: u64,
     text: String,
     color: String,
+    is_regex: bool,
 }
 
 #[derive(Clone)]
@@ -23,7 +24,8 @@ struct HighlightSettings {
     _id: u64,
     text: String,
     color: String,
-    regex: Regex,
+    is_regex: bool,
+    regex: Option<Regex>,
 }
 #[derive(Clone, serde::Serialize)]
 struct Payload {
@@ -57,16 +59,28 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Paylo
     }
     // Applique le surlignage côté Rust
     for hl in &highlights_vec {
-        if !hl.text.is_empty() && hl.regex.is_match(&line) {
-            line = hl
-                .regex
-                .replace_all(
-                    &line,
-                    format!("<span style=\"color:{};\">$0</span>", hl.color),
-                )
-                .to_string();
-            matched = true;
-            should_send_raw = true;
+        if !hl.text.is_empty() {
+            if hl.is_regex {
+                if let Some(ref regex) = hl.regex {
+                    if regex.is_match(&line) {
+                        line = regex
+                            .replace_all(
+                                &line,
+                                format!("<span style=\"color:{};\">$0</span>", hl.color),
+                            )
+                            .to_string();
+                        matched = true;
+                        should_send_raw = true;
+                    }
+                }
+            } else if line.contains(&hl.text as &str) {
+                line = line.replace(
+                    &hl.text as &str,
+                    &format!("<span style=\"color:{}\">{}</span>", hl.color, hl.text),
+                );
+                matched = true;
+                should_send_raw = true;
+            }
         }
     }
     if should_send_raw {
@@ -124,18 +138,22 @@ async fn set_highlights(
     let mut hilights_settings: Vec<HighlightSettings> = Vec::new();
     for elem in highlights {
         let text = elem.text.clone();
-        //println!("Compiling regex for highlight: {}", text);
-        let cur_regex = match regex::Regex::new(&text) {
-            Ok(reg) => reg,
-            Err(err) => {
-                println!("Failed to set regex: {}", err);
-                continue;
+        let cur_regex = if elem.is_regex {
+            match regex::Regex::new(&text) {
+                Ok(reg) => Some(reg),
+                Err(err) => {
+                    println!("Failed to set regex: {}", err);
+                    continue;
+                }
             }
+        } else {
+            None
         };
         hilights_settings.push(HighlightSettings {
             _id: elem.id,
             text: elem.text,
             color: elem.color,
+            is_regex: elem.is_regex,
             regex: cur_regex,
         });
     }

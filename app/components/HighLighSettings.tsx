@@ -5,6 +5,8 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import IconButton from '@mui/material/IconButton';
+import Checkbox from '@mui/material/Checkbox';
+import Tooltip from '@mui/material/Tooltip';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import { invoke } from "@tauri-apps/api/core";
@@ -16,6 +18,7 @@ interface HighligtConfig {
   id: number;
   text: string;
   color: string;
+  is_regex: boolean;
 }
 
 
@@ -68,7 +71,7 @@ const HighLighSettings: React.FC = () => {
             const result = await readTextFile(filePath, { baseDir: BaseDirectory.AppConfig });
             const highlights = JSON.parse(result);
             let tmpArr: HighligtConfig[] = [];
-            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color }));
+            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color, is_regex: h.is_regex ?? true }));
             setHighlights(tmpArr);
         } catch (e) {
             console.log('Erreur lors du chargement : ' + e);
@@ -80,10 +83,10 @@ const HighLighSettings: React.FC = () => {
     }, []);
     const handleAddHighlight = async () => {
         if(highlights == undefined) {
-            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12' }]);
+            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true }]);
             return;
         };
-        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12' }]);
+        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true }]);
     };
 
     const handleRemoveHighlight = (id: number) => {
@@ -94,6 +97,11 @@ const HighLighSettings: React.FC = () => {
     const handleHighlightChange = (id: number, field: keyof HighligtConfig, value: string) => {
         if(highlights == undefined) return;
         setHighlights(highlights.map(f => f.id === id ? { ...f, [field]: value } : f));
+    };
+
+    const handleHighlightIsRegexChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => f.id === id ? { ...f, is_regex: value } : f));
     };
 
     return (
@@ -119,6 +127,13 @@ const HighLighSettings: React.FC = () => {
             onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
             style={{ width: 40, height: 40, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
             />
+            <Tooltip title="Regex">
+              <Checkbox
+                size="small"
+                checked={filter.is_regex}
+                onChange={(e) => handleHighlightIsRegexChange(filter.id, e.target.checked)}
+              />
+            </Tooltip>
             <IconButton size="small" onClick={() => handleRemoveHighlight(filter.id)}>
             <DeleteIcon />
             </IconButton>
