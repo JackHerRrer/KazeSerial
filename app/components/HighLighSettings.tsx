@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import IconButton from '@mui/material/IconButton';
 import Checkbox from '@mui/material/Checkbox';
@@ -120,12 +119,6 @@ const HighLighSettings: React.FC = () => {
 
     return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography variant="subtitle2">Highlight sentence</Typography>
-            <IconButton size="small" onClick={handleAddHighlight}>
-                <AddIcon />
-            </IconButton>
-        </Box>
         <Box sx={{ pr: 6, overflow: 'visible' }}>
             <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible' }}>
                 <TableHead sx={{ overflow: 'visible' }}>
@@ -222,6 +215,15 @@ const HighLighSettings: React.FC = () => {
                         </TableCell>
                     </TableRow>
                     ))}
+                    <TableRow sx={{ '& td, & th': { borderBottom: 0 } }}>
+                        <TableCell colSpan={5} align="center" sx={{ p: 0 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 34 }}>
+                                <IconButton size="small" sx={{ p: 0.5 }} onClick={handleAddHighlight}>
+                                    <AddIcon />
+                                </IconButton>
+                            </Box>
+                        </TableCell>
+                    </TableRow>
                 </TableBody>
             </Table>
         </Box>
