@@ -8,15 +8,19 @@ import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
 import Select, { SelectChangeEvent } from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
-import { useEffect } from 'react'
 import { invoke } from "@tauri-apps/api/core";
 import RefreshIcon from '@mui/icons-material/Refresh';
+
+type SerialPortEntry = {
+  portName: string;
+  deviceLabel: string;
+};
 
 const SerialSettings: React.FC = () => {
   const isCancelled = React.useRef(false);
   const [port, setPort] = useState('');
   const [baudRate, setBaudRate] = useState(115200);
-  const [ports, setPorts] = useState<string[]>([]);
+  const [ports, setPorts] = useState<SerialPortEntry[]>([]);
   const [isConnected, setIsConnected] = useState(false);
 
   React.useEffect(() => {
@@ -59,15 +63,15 @@ const SerialSettings: React.FC = () => {
 
   };
   const listUart = () => {
-    invoke<string[]>("list_ports")
+    invoke<SerialPortEntry[]>("list_ports")
       .then((s) => {
         if (!isCancelled.current) {
             setPorts(s);
         }
 
-        if(port.length == 0 && s[0] != undefined && s[0].length>0)
+        if(port.length == 0 && s[0] != undefined && s[0].portName.length > 0)
         {
-            setPort(s[0]);
+            setPort(s[0].portName);
         }
       })
       .catch((err: unknown) => {
@@ -75,9 +79,25 @@ const SerialSettings: React.FC = () => {
       });
   };
 
+  const renderPortLabel = (portEntry: SerialPortEntry) => (
+    <Box
+      component="span"
+      sx={{
+        display: 'block',
+        width: '100%',
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {portEntry.portName} - {portEntry.deviceLabel}
+    </Box>
+  );
+
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, width: '100%' }}>
         <IconButton
           aria-label="detect serial"
           size="small"
@@ -93,7 +113,7 @@ const SerialSettings: React.FC = () => {
         >
           <RefreshIcon fontSize="small" />
         </IconButton>
-        <FormControl fullWidth size="small">
+        <FormControl size="small" sx={{ flex: 1, minWidth: 0, width: 0 }}>
 
           <InputLabel id="serial-port-select-label">Port</InputLabel>
           <Select
@@ -102,11 +122,35 @@ const SerialSettings: React.FC = () => {
             value={port}
             label="Port"
             onChange={handlePortChange}
+            renderValue={(selected) => {
+              const selectedPort = ports.find((p) => p.portName === (selected as string));
+              if (!selectedPort) {
+                return selected as string;
+              }
+              return renderPortLabel(selectedPort);
+            }}
+            MenuProps={{
+              PaperProps: {
+                sx: {
+                  maxWidth: 'min(90vw, 560px)',
+                },
+              },
+            }}
+            sx={{
+              width: '100%',
+              minWidth: 0,
+              '& .MuiSelect-select': {
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              },
+            }}
           >
 
             {ports.map((p) => (
-              <MenuItem key={p} value={p}>
-                {p}
+              <MenuItem key={p.portName} value={p.portName} sx={{ minWidth: 0, maxWidth: '100%' }}>
+                {renderPortLabel(p)}
               </MenuItem>
             ))}
           </Select>

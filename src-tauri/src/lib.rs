@@ -1,5 +1,5 @@
 use regex::Regex;
-use serialport::SerialPort;
+use serialport::{SerialPort, SerialPortType};
 
 use std::{fs, sync::Arc};
 use tauri::{Emitter, Manager};
@@ -36,6 +36,13 @@ struct Payload {
     matched: bool,
     rawline: Option<String>,
     removed_line: bool,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SerialPortEntry {
+    port_name: String,
+    device_label: String,
 }
 
 #[derive(Clone)]
@@ -182,12 +189,46 @@ async fn set_highlights(
 }
 
 #[tauri::command]
-async fn list_ports() -> Result<Vec<String>, String> {
+async fn list_ports() -> Result<Vec<SerialPortEntry>, String> {
     println!("Listing ports...");
     match serialport::available_ports() {
         Ok(ports) => {
             println!("Listing ports... {:?}", ports);
-            Ok(ports.into_iter().map(|p| p.port_name).collect())
+            Ok(ports
+                .into_iter()
+                .map(|p| {
+                    let device_label = match p.port_type {
+                        SerialPortType::UsbPort(info) => {
+                            let mut label_parts: Vec<String> = Vec::new();
+
+                            if let Some(manufacturer) = info.manufacturer {
+                                if !manufacturer.trim().is_empty() {
+                                    label_parts.push(manufacturer);
+                                }
+                            }
+                            if let Some(product) = info.product {
+                                if !product.trim().is_empty() {
+                                    label_parts.push(product);
+                                }
+                            }
+
+                            if label_parts.is_empty() {
+                                format!("USB device {:04x}:{:04x}", info.vid, info.pid)
+                            } else {
+                                label_parts.join(" ")
+                            }
+                        }
+                        SerialPortType::BluetoothPort => "Bluetooth serial device".to_string(),
+                        SerialPortType::PciPort => "PCI serial device".to_string(),
+                        SerialPortType::Unknown => "Serial device".to_string(),
+                    };
+
+                    SerialPortEntry {
+                        port_name: p.port_name,
+                        device_label,
+                    }
+                })
+                .collect())
         }
         Err(e) => Err(format!("Failed to list ports: {}", e)),
     }
