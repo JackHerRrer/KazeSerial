@@ -41,7 +41,10 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
           id='SerialLinesList'
           style={{ height, width, paddingBottom:'20px'}}
           rowCount={serial_messages.length}
-          rowHeight={20}
+          rowHeight={(index) => {
+            const line = serial_messages[index];
+            return line?.removed_line ? 0 : 20;
+          }}
           rowComponent={RowComponent}
           rowProps={{ serialMessages: serial_messages, onClickRow}} // Pass serial_messages via rowProps
           overscanCount={10}

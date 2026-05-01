@@ -23,11 +23,13 @@ interface HighligtConfig {
   color: string;
   is_regex: boolean;
   whole_line: boolean;
+    remove: boolean;
 }
 
 const OPTION_COLUMN_WIDTH = 36;
 const OPTION_LABELS = ['Color', 'Regexp', 'Whole line', 'Remove'] as const;
 const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
+const ACTION_COLUMN_WIDTH = 36;
 
 
 export function useCustomHilightsState(p0?: never[]): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
@@ -79,7 +81,7 @@ const HighLighSettings: React.FC = () => {
             const result = await readTextFile(filePath, { baseDir: BaseDirectory.AppConfig });
             const highlights = JSON.parse(result);
             let tmpArr: HighligtConfig[] = [];
-            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color, is_regex: h.is_regex ?? true, whole_line: h.whole_line ?? false }));
+            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color, is_regex: h.is_regex ?? true, whole_line: h.whole_line ?? false, remove: h.remove ?? false }));
             setHighlights(tmpArr);
         } catch (e) {
             console.log('Erreur lors du chargement : ' + e);
@@ -91,10 +93,10 @@ const HighLighSettings: React.FC = () => {
     }, []);
     const handleAddHighlight = async () => {
         if(highlights == undefined) {
-            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false }]);
+            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false, remove: false }]);
             return;
         };
-        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false }]);
+        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false, remove: false }]);
     };
 
     const handleRemoveHighlight = (id: number) => {
@@ -115,6 +117,11 @@ const HighLighSettings: React.FC = () => {
     const handleHighlightWholeLineChange = (id: number, value: boolean) => {
         if(highlights == undefined) return;
         setHighlights(highlights.map(f => f.id === id ? { ...f, whole_line: value } : f));
+    };
+
+    const handleHighlightRemoveChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => f.id === id ? { ...f, remove: value } : f));
     };
 
     return (
@@ -147,11 +154,19 @@ const HighLighSettings: React.FC = () => {
                                         whiteSpace: 'nowrap',
                                         lineHeight: 1,
                                     }}>
-                                        {label === 'Remove' ? '' : label}
+                                        {label}
                                     </Box>
                                 </Box>
                             </TableCell>
                         ))}
+                        <TableCell
+                            sx={{
+                                width: ACTION_COLUMN_WIDTH,
+                                minWidth: ACTION_COLUMN_WIDTH,
+                                maxWidth: ACTION_COLUMN_WIDTH,
+                                p: 0,
+                            }}
+                        />
                     </TableRow>
                 </TableHead>
                 <TableBody>
@@ -174,8 +189,17 @@ const HighLighSettings: React.FC = () => {
                                 <input
                                     type="color"
                                     value={filter.color.slice(0, 7)}
+                                    disabled={filter.remove}
                                     onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
-                                    style={{ width: 26, height: 26, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                                    style={{
+                                        width: 26,
+                                        height: 26,
+                                        padding: 0,
+                                        border: 'none',
+                                        background: 'none',
+                                        cursor: filter.remove ? 'not-allowed' : 'pointer',
+                                        opacity: filter.remove ? 0.45 : 1,
+                                    }}
                                 />
                             </Box>
                         </TableCell>
@@ -208,6 +232,18 @@ const HighLighSettings: React.FC = () => {
                             sx={{ width: OPTION_COLUMN_WIDTH, minWidth: OPTION_COLUMN_WIDTH, maxWidth: OPTION_COLUMN_WIDTH, p: 0 }}
                         >
                             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <Checkbox
+                                    size="small"
+                                    checked={filter.remove}
+                                    onChange={(e) => handleHighlightRemoveChange(filter.id, e.target.checked)}
+                                />
+                            </Box>
+                        </TableCell>
+                        <TableCell
+                            align="center"
+                            sx={{ width: ACTION_COLUMN_WIDTH, minWidth: ACTION_COLUMN_WIDTH, maxWidth: ACTION_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                                 <IconButton size="small" sx={{ p: 0.5 }} onClick={() => handleRemoveHighlight(filter.id)}>
                                     <DeleteIcon />
                                 </IconButton>
@@ -216,7 +252,7 @@ const HighLighSettings: React.FC = () => {
                     </TableRow>
                     ))}
                     <TableRow sx={{ '& td, & th': { borderBottom: 0 } }}>
-                        <TableCell colSpan={5} align="center" sx={{ p: 0 }}>
+                        <TableCell colSpan={6} align="center" sx={{ p: 0 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 34 }}>
                                 <IconButton size="small" sx={{ p: 0.5 }} onClick={handleAddHighlight}>
                                     <AddIcon />

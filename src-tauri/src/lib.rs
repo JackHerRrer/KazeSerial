@@ -18,6 +18,7 @@ struct HighlightMessage {
     color: String,
     is_regex: bool,
     whole_line: bool,
+    remove: bool,
 }
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ struct HighlightSettings {
     color: String,
     is_regex: bool,
     whole_line: bool,
+    remove: bool,
     regex: Option<Regex>,
 }
 #[derive(Clone, serde::Serialize)]
@@ -35,6 +37,7 @@ struct Payload {
     message: String,
     matched: bool,
     rawline: Option<String>,
+    removed_line: bool,
 }
 
 #[derive(Clone)]
@@ -53,6 +56,7 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Paylo
     let mut line = input_line;
     let mut matched = false;
     let mut should_send_raw = false;
+    let mut removed_line = false;
     for rm in &removes_vec {
         if !rm.is_empty() && line.contains(rm) {
             line = line.replace(rm, "");
@@ -68,22 +72,38 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Paylo
                 line.contains(&hl.text as &str)
             };
             if does_match {
-                if hl.whole_line {
-                    line = format!("<span style=\"color:{}\">{}</span>", hl.color, line);
-                } else if hl.is_regex {
-                    if let Some(ref regex) = hl.regex {
-                        line = regex
-                            .replace_all(
-                                &line,
-                                format!("<span style=\"color:{};\">$0</span>", hl.color),
-                            )
-                            .to_string();
+                if hl.remove {
+                    if hl.whole_line {
+                        line.clear();
+                        removed_line = true;
+                        matched = true;
+                        should_send_raw = true;
+                        break;
+                    } else if hl.is_regex {
+                        if let Some(ref regex) = hl.regex {
+                            line = regex.replace_all(&line, "").to_string();
+                        }
+                    } else {
+                        line = line.replace(&hl.text as &str, "");
                     }
                 } else {
-                    line = line.replace(
-                        &hl.text as &str,
-                        &format!("<span style=\"color:{}\">{}</span>", hl.color, hl.text),
-                    );
+                    if hl.whole_line {
+                        line = format!("<span style=\"color:{}\">{}</span>", hl.color, line);
+                    } else if hl.is_regex {
+                        if let Some(ref regex) = hl.regex {
+                            line = regex
+                                .replace_all(
+                                    &line,
+                                    format!("<span style=\"color:{};\">$0</span>", hl.color),
+                                )
+                                .to_string();
+                        }
+                    } else {
+                        line = line.replace(
+                            &hl.text as &str,
+                            &format!("<span style=\"color:{}\">{}</span>", hl.color, hl.text),
+                        );
+                    }
                 }
                 matched = true;
                 should_send_raw = true;
@@ -95,14 +115,16 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Paylo
             id: message_id,
             message: line,
             matched,
-            rawline:Some(rawline)
+            rawline:Some(rawline),
+            removed_line,
         }, should_send_raw);
     }else{
         return (Payload {
             id: message_id,
             message: line,
             matched,
-            rawline:None
+            rawline:None,
+            removed_line,
         }, should_send_raw);
     }
 }
@@ -162,6 +184,7 @@ async fn set_highlights(
             color: elem.color,
             is_regex: elem.is_regex,
             whole_line: elem.whole_line,
+            remove: elem.remove,
             regex: cur_regex,
         });
     }
@@ -235,7 +258,8 @@ async fn open_port(
                                             id:message_id,
                                             message: test,
                                             matched: false,
-                                            rawline:None
+                                            rawline:None,
+                                            removed_line: false,
                                         },
                                     );
                                     continue;
@@ -253,9 +277,7 @@ async fn open_port(
                                     //let s = String::from_utf8_lossy(&line_buffer);
                                     //let mut line = regex_eol.replace_all(&s, "").to_string();
                                     let line = String::from_utf8_lossy(&line_buffer).to_string();
-                                    let should_send_raw: bool;
-                                    let cur_payload: Payload;
-                                    (cur_payload,should_send_raw) = parse_log_line(line.clone(), app_handle.clone()).await;
+                                    let (cur_payload, _) = parse_log_line(line.clone(), app_handle.clone()).await;
                                     let _ = app_handle.emit(
                                         "serial-data",
                                         cur_payload,
