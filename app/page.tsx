@@ -61,11 +61,13 @@ const initialLogs: SerialMessage[] = [];
 export default function Home() {
   const listRefMain = useRef<ListImperativeAPI>(null!);
   const listRefFocus = useRef<ListImperativeAPI>(null!);
-  const ignoreScrollUntilRef = useRef(0);
+  const ignoreMainScrollUntilRef = useRef(0);
+  const ignoreFocusScrollUntilRef = useRef(0);
   
   const [logs, setLogs] = useState<SerialMessage[]>(initialLogs);
   const [focusLogs, setFocusLogs] = useState<SerialMessage[]>(initialLogs);
-  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
+  const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
+  const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
 
 
   const appendLogs = (count: number) => {
@@ -142,17 +144,14 @@ export default function Home() {
       });
   };
   useEffect(() => {
-    if (isAutoScrollEnabled) {
-      if (listRefMain.current) {
-        if(logs.length > 0)
-          scrollToRow(listRefMain, logs.length - 1, 'auto');
-      }
-      if (listRefFocus.current) {
-        if(focusLogs.length > 0)
-          scrollToRow(listRefFocus, focusLogs.length - 1, 'auto');
-      }
+    if (isMainAutoScrollEnabled && listRefMain.current && logs.length > 0) {
+      scrollToRow(listRefMain, logs.length - 1, 'auto');
     }
-  }, [logs, focusLogs]);
+
+    if (isFocusAutoScrollEnabled && listRefFocus.current && focusLogs.length > 0) {
+      scrollToRow(listRefFocus, focusLogs.length - 1, 'auto');
+    }
+  }, [logs, focusLogs, isMainAutoScrollEnabled, isFocusAutoScrollEnabled]);
 
   useEffect(() => {
       //listen to a event
@@ -196,13 +195,23 @@ export default function Home() {
   };
 
   const onToggleAutoScrollFromLogs = () => {
-    setIsAutoScrollEnabled((prev) => {
+    setIsMainAutoScrollEnabled((prev) => {
       const next = !prev;
       if (next) {
-        ignoreScrollUntilRef.current = Date.now() + 250;
+        ignoreMainScrollUntilRef.current = Date.now() + 250;
         if (logs.length > 0) {
           scrollToRow(listRefMain, logs.length - 1, 'auto');
         }
+      }
+      return next;
+    });
+  };
+
+  const onToggleAutoScrollFromFocus = () => {
+    setIsFocusAutoScrollEnabled((prev) => {
+      const next = !prev;
+      if (next) {
+        ignoreFocusScrollUntilRef.current = Date.now() + 250;
         if (focusLogs.length > 0) {
           scrollToRow(listRefFocus, focusLogs.length - 1, 'auto');
         }
@@ -211,7 +220,11 @@ export default function Home() {
     });
   };
 
-  const handleScroll = () => (event: SyntheticEvent<HTMLDivElement>) => {
+  const handleScroll = (
+    isAutoScrollEnabled: boolean,
+    setIsAutoScrollEnabled: React.Dispatch<React.SetStateAction<boolean>>,
+    ignoreScrollUntilRef: React.MutableRefObject<number>
+  ) => (event: SyntheticEvent<HTMLDivElement>) => {
     if (Date.now() < ignoreScrollUntilRef.current) {
       return;
     }
@@ -266,7 +279,7 @@ export default function Home() {
                   >
                     <IconButton
                       aria-label="toggle auto-scroll"
-                      aria-pressed={isAutoScrollEnabled}
+                      aria-pressed={isMainAutoScrollEnabled}
                       size="medium"
                       color="inherit"
                       onClick={onToggleAutoScrollFromLogs}
@@ -274,9 +287,9 @@ export default function Home() {
                         width: 36,
                         height: 36,
                         border: '1px solid #333',
-                        bgcolor: isAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
+                        bgcolor: isMainAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
                         '&:hover': {
-                          bgcolor: isAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
+                          bgcolor: isMainAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
                         },
                       }}
                     >
@@ -303,7 +316,7 @@ export default function Home() {
                   <SerialTerminal
                     serial_messages={logs}
                     listRef={listRefMain}
-                    onScroll={handleScroll()}
+                    onScroll={handleScroll(isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
                   />
                 </Box>
               </Resizable>
@@ -320,31 +333,56 @@ export default function Home() {
               {"focus"}
             </Typography>
               <Box sx={{ flexGrow: 1, minHeight: '10%', position: 'relative' }}>
-                <IconButton
-                  aria-label="clear focus logs"
-                  size="medium"
-                  color="inherit"
-                  onClick={clearFocusLogs}
+                <Box
                   sx={{
                     position: 'absolute',
                     top: 10,
                     right: 28,
                     zIndex: 2,
-                    width: 36,
-                    height: 36,
-                    border: '1px solid #333',
-                    bgcolor: 'rgba(30, 30, 30, 0.75)',
-                    '&:hover': {
-                      bgcolor: 'rgba(30, 30, 30, 0.95)',
-                    },
+                    display: 'flex',
+                    gap: 1,
                   }}
                 >
-                  <DeleteOutlineIcon fontSize="medium" />
-                </IconButton>
+                  <IconButton
+                    aria-label="toggle focus auto-scroll"
+                    aria-pressed={isFocusAutoScrollEnabled}
+                    size="medium"
+                    color="inherit"
+                    onClick={onToggleAutoScrollFromFocus}
+                    sx={{
+                      width: 36,
+                      height: 36,
+                      border: '1px solid #333',
+                      bgcolor: isFocusAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
+                      '&:hover': {
+                        bgcolor: isFocusAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
+                      },
+                    }}
+                  >
+                    <KeyboardArrowDownIcon fontSize="medium" />
+                  </IconButton>
+                  <IconButton
+                    aria-label="clear focus logs"
+                    size="medium"
+                    color="inherit"
+                    onClick={clearFocusLogs}
+                    sx={{
+                      width: 36,
+                      height: 36,
+                      border: '1px solid #333',
+                      bgcolor: 'rgba(30, 30, 30, 0.75)',
+                      '&:hover': {
+                        bgcolor: 'rgba(30, 30, 30, 0.95)',
+                      },
+                    }}
+                  >
+                    <DeleteOutlineIcon fontSize="medium" />
+                  </IconButton>
+                </Box>
                 <SerialTerminal
                   serial_messages={focusLogs}
                   listRef={listRefFocus}
-                  onScroll={handleScroll()}
+                  onScroll={handleScroll(isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
                   onClickRow={onClickFocusLogs}
                 />
               </Box>
@@ -356,7 +394,7 @@ export default function Home() {
             <ControlPanel 
               onAppendLogs={() => appendLogs(10000)}
               onRegenerateLogs={regenerateLogs}
-              isAutoScrollEnabled={isAutoScrollEnabled}
+              isAutoScrollEnabled={isMainAutoScrollEnabled}
               onToggleAutoScroll={onToggleAutoScrollFromLogs}
               onClickClearLog={clearLogs}
               onClickClearFocusLog={clearFocusLogs}
