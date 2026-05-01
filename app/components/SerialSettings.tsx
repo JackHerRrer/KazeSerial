@@ -3,12 +3,14 @@
 import React, { useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
 import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
 import Select, { SelectChangeEvent } from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import { useEffect } from 'react'
 import { invoke } from "@tauri-apps/api/core";
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 const SerialSettings: React.FC = () => {
   const isCancelled = React.useRef(false);
@@ -75,27 +77,41 @@ const SerialSettings: React.FC = () => {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Button variant="outlined" size="small" color="primary" onClick={listUart}>
-        Detect serial
-      </Button>
-      <FormControl fullWidth size="small">
-
-        <InputLabel id="serial-port-select-label">Port</InputLabel>
-        <Select
-          labelId="serial-port-select-label"
-          id="serial-port-select"
-          value={port}
-          label="Port"
-          onChange={handlePortChange}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <IconButton
+          aria-label="detect serial"
+          size="small"
+          color="primary"
+          onClick={listUart}
+          sx={{
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1,
+            width: 40,
+            height: 40,
+          }}
         >
+          <RefreshIcon fontSize="small" />
+        </IconButton>
+        <FormControl fullWidth size="small">
 
-          {ports.map((p) => (
-            <MenuItem key={p} value={p}>
-              {p}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
+          <InputLabel id="serial-port-select-label">Port</InputLabel>
+          <Select
+            labelId="serial-port-select-label"
+            id="serial-port-select"
+            value={port}
+            label="Port"
+            onChange={handlePortChange}
+          >
+
+            {ports.map((p) => (
+              <MenuItem key={p} value={p}>
+                {p}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Box>
       <FormControl fullWidth size="small">
         <InputLabel id="baud-rate-select-label">Baud Rate</InputLabel>
         <Select
