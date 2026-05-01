@@ -6,7 +6,11 @@ import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import IconButton from '@mui/material/IconButton';
 import Checkbox from '@mui/material/Checkbox';
-import Tooltip from '@mui/material/Tooltip';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import { invoke } from "@tauri-apps/api/core";
@@ -21,6 +25,10 @@ interface HighligtConfig {
   is_regex: boolean;
   whole_line: boolean;
 }
+
+const OPTION_COLUMN_WIDTH = 36;
+const OPTION_LABELS = ['Color', 'Regexp', 'Whole line', 'Remove'] as const;
+const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
 
 
 export function useCustomHilightsState(p0?: never[]): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
@@ -113,45 +121,110 @@ const HighLighSettings: React.FC = () => {
     return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="subtitle2">Highlight sentence</Typography>
-        <IconButton size="small" onClick={handleAddHighlight}>
-            <AddIcon />
-        </IconButton>
-        </Box>
-        {highlights?.map((filter) => (
-        <Box key={filter.id} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <TextField
-            size="small"
-            placeholder="Filter text"
-            value={filter.text}
-            onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
-            sx={{ flexGrow: 1 }}
-            />
-            <input
-            type="color"
-            value={filter.color.slice(0, 7)}
-            onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
-            style={{ width: 40, height: 40, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
-            />
-            <Tooltip title="Regex">
-              <Checkbox
-                size="small"
-                checked={filter.is_regex}
-                onChange={(e) => handleHighlightIsRegexChange(filter.id, e.target.checked)}
-              />
-            </Tooltip>
-            <Tooltip title="Whole line">
-              <Checkbox
-                size="small"
-                checked={filter.whole_line}
-                onChange={(e) => handleHighlightWholeLineChange(filter.id, e.target.checked)}
-              />
-            </Tooltip>
-            <IconButton size="small" onClick={() => handleRemoveHighlight(filter.id)}>
-            <DeleteIcon />
+            <Typography variant="subtitle2">Highlight sentence</Typography>
+            <IconButton size="small" onClick={handleAddHighlight}>
+                <AddIcon />
             </IconButton>
         </Box>
-        ))}
+        <Box sx={{ pr: 6, overflow: 'visible' }}>
+            <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible' }}>
+                <TableHead sx={{ overflow: 'visible' }}>
+                    <TableRow sx={{ overflow: 'visible' }}>
+                        <TableCell sx={{ verticalAlign: 'bottom' }}>Sentence</TableCell>
+                        {OPTION_LABELS.map((label) => (
+                            <TableCell
+                                key={label}
+                                sx={{
+                                    width: OPTION_COLUMN_WIDTH,
+                                    minWidth: OPTION_COLUMN_WIDTH,
+                                    maxWidth: OPTION_COLUMN_WIDTH,
+                                    p: 0,
+                                    height: '90px',
+                                    overflow: 'visible',
+                                    verticalAlign: 'bottom',
+                                }}
+                            >
+                                <Box sx={{ position: 'relative', width: '100%', height: '100%', overflow: 'visible' }}>
+                                    <Box sx={{
+                                        position: 'absolute',
+                                        bottom: 8,
+                                        left: `${OPTION_LABEL_RIGHT_OFFSET_PX}px`,
+                                        transformOrigin: 'left bottom',
+                                        transform: 'rotate(-45deg)',
+                                        whiteSpace: 'nowrap',
+                                        lineHeight: 1,
+                                    }}>
+                                        {label}
+                                    </Box>
+                                </Box>
+                            </TableCell>
+                        ))}
+                    </TableRow>
+                </TableHead>
+                <TableBody>
+                    {highlights?.map((filter) => (
+                    <TableRow key={filter.id}>
+                        <TableCell>
+                            <TextField
+                                size="small"
+                                placeholder="Filter text"
+                                value={filter.text}
+                                onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
+                                fullWidth
+                            />
+                        </TableCell>
+                        <TableCell
+                            align="center"
+                            sx={{ width: OPTION_COLUMN_WIDTH, minWidth: OPTION_COLUMN_WIDTH, maxWidth: OPTION_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <input
+                                    type="color"
+                                    value={filter.color.slice(0, 7)}
+                                    onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
+                                    style={{ width: 26, height: 26, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                                />
+                            </Box>
+                        </TableCell>
+                        <TableCell
+                            align="center"
+                            sx={{ width: OPTION_COLUMN_WIDTH, minWidth: OPTION_COLUMN_WIDTH, maxWidth: OPTION_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <Checkbox
+                                    size="small"
+                                    checked={filter.is_regex}
+                                    onChange={(e) => handleHighlightIsRegexChange(filter.id, e.target.checked)}
+                                />
+                            </Box>
+                        </TableCell>
+                        <TableCell
+                            align="center"
+                            sx={{ width: OPTION_COLUMN_WIDTH, minWidth: OPTION_COLUMN_WIDTH, maxWidth: OPTION_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <Checkbox
+                                    size="small"
+                                    checked={filter.whole_line}
+                                    onChange={(e) => handleHighlightWholeLineChange(filter.id, e.target.checked)}
+                                />
+                            </Box>
+                        </TableCell>
+                        <TableCell
+                            align="center"
+                            sx={{ width: OPTION_COLUMN_WIDTH, minWidth: OPTION_COLUMN_WIDTH, maxWidth: OPTION_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <IconButton size="small" sx={{ p: 0.5 }} onClick={() => handleRemoveHighlight(filter.id)}>
+                                    <DeleteIcon />
+                                </IconButton>
+                            </Box>
+                        </TableCell>
+                    </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+        </Box>
     </Box>
     );
 };
