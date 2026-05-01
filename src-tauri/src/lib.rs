@@ -8,10 +8,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 #[derive(Clone, serde::Deserialize)]
-struct RemoveMessage {
-    text: String,
-}
-#[derive(Clone, serde::Deserialize)]
 struct HighlightMessage {
     id: u64,
     text: String,
@@ -44,25 +40,17 @@ struct Payload {
 struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
-    removes: Arc<Mutex<Vec<String>>>,
     message_id_counter: Arc<AtomicU64>,
 }
 
 async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Payload, bool) {
     let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
-    let removes_vec = emitter.state::<AppState>().removes.lock().await.clone();
     let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
     let rawline = input_line.clone();
     let mut line = input_line;
     let mut matched = false;
     let mut should_send_raw = false;
     let mut removed_line = false;
-    for rm in &removes_vec {
-        if !rm.is_empty() && line.contains(rm) {
-            line = line.replace(rm, "");
-            should_send_raw = true;
-        }
-    }
     // Applique le surlignage côté Rust
     for hl in &highlights_vec {
         if !hl.text.is_empty() {
@@ -135,7 +123,7 @@ async fn add_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<
     let app_handle = emitter.clone();
     let mut logs_line: Vec<Payload> = Vec::new();
     let mut logs_line_focus: Vec<Payload> = Vec::new();
-    // Applique la suppression des chaînes avant le surlignage
+    // Applique les regles de highlight/remove configurees
     for line in lines{
         let should_send_raw ;
         let cur_payload: Payload;
@@ -190,22 +178,6 @@ async fn set_highlights(
     }
     let mut lock = state.highlights.lock().await;
     *lock = hilights_settings;
-    Ok(())
-}
-
-#[tauri::command]
-async fn set_removes(
-    removes: Vec<RemoveMessage>,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    let mut removes_vec: Vec<String> = Vec::new();
-    for elem in removes {
-        if !elem.text.is_empty() {
-            removes_vec.push(elem.text);
-        }
-    }
-    let mut lock = state.removes.lock().await;
-    *lock = removes_vec;
     Ok(())
 }
 
@@ -322,7 +294,6 @@ pub fn run() {
     let state = AppState {
         serial_connection: Arc::new(Mutex::new(None)),
         highlights: Arc::new(Mutex::new(Vec::new())),
-        removes: Arc::new(Mutex::new(Vec::new())),
         message_id_counter: Arc::new(AtomicU64::new(1)),
     };
     let builder = tauri::Builder::default()
@@ -340,7 +311,6 @@ pub fn run() {
             open_port,
             close_port,
             set_highlights,
-            set_removes,
             add_logs_line
         ])
         .run(tauri::generate_context!())

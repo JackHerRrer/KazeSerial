@@ -8,7 +8,6 @@ import Tab from '@mui/material/Tab';
 import SerialSettings from './SerialSettings';
 import HighLighSettings from './HighLighSettings';
 import ButtonGroup from '@mui/material/ButtonGroup';
-import RemoveSentenceSettings from './SentenceRemovalSettings';
 import FileSettings from './FileSettings';
 import { SerialMessage } from '../types/SerialMessage';
 
@@ -127,7 +126,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           </Button>
         </Box>
         <HighLighSettings />
-        <RemoveSentenceSettings />
       </Box>
     </Box>
   );
