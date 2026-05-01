@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
@@ -60,6 +61,7 @@ const initialLogs: SerialMessage[] = [];
 export default function Home() {
   const listRefMain = useRef<ListImperativeAPI>(null!);
   const listRefFocus = useRef<ListImperativeAPI>(null!);
+  const ignoreScrollUntilRef = useRef(0);
   
   const [logs, setLogs] = useState<SerialMessage[]>(initialLogs);
   const [focusLogs, setFocusLogs] = useState<SerialMessage[]>(initialLogs);
@@ -193,21 +195,42 @@ export default function Home() {
     });
   };
 
-  const handleScroll = (listRef: React.RefObject<ListImperativeAPI>) => (event:SyntheticEvent<HTMLDivElement>) => {
-    if(event.nativeEvent == null) {
+  const onToggleAutoScrollFromLogs = () => {
+    setIsAutoScrollEnabled((prev) => {
+      const next = !prev;
+      if (next) {
+        ignoreScrollUntilRef.current = Date.now() + 250;
+        if (logs.length > 0) {
+          scrollToRow(listRefMain, logs.length - 1, 'auto');
+        }
+        if (focusLogs.length > 0) {
+          scrollToRow(listRefFocus, focusLogs.length - 1, 'auto');
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleScroll = () => (event: SyntheticEvent<HTMLDivElement>) => {
+    if (Date.now() < ignoreScrollUntilRef.current) {
       return;
     }
-    const myTarget :HTMLDivElement = event.nativeEvent.target as HTMLDivElement;
-    let diff = myTarget.scrollHeight - myTarget.clientHeight - myTarget.scrollTop;
-    if(diff == 0) {
+
+    if (event.nativeEvent == null) {
+      return;
+    }
+    const myTarget: HTMLDivElement = event.nativeEvent.target as HTMLDivElement;
+    const diff = myTarget.scrollHeight - myTarget.clientHeight - myTarget.scrollTop;
+
+    if (diff == 0) {
       if (!isAutoScrollEnabled) {
         setIsAutoScrollEnabled(true);
       }
-    } else if((diff > 30)) {
+    } else if (diff > 30) {
       if (isAutoScrollEnabled) {
         setIsAutoScrollEnabled(false);
       }
-    } 
+    }
   };
   console.log("render page");
 
@@ -231,16 +254,40 @@ export default function Home() {
                 }}
                 >
                 <Box sx={{ height: '100%', position: 'relative' }}>
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 28,
+                      zIndex: 2,
+                      display: 'flex',
+                      gap: 1,
+                    }}
+                  >
+                    <IconButton
+                      aria-label="toggle auto-scroll"
+                      aria-pressed={isAutoScrollEnabled}
+                      size="medium"
+                      color="inherit"
+                      onClick={onToggleAutoScrollFromLogs}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: isAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: isAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <KeyboardArrowDownIcon fontSize="medium" />
+                    </IconButton>
                   <IconButton
                     aria-label="clear logs"
                     size="medium"
                     color="inherit"
                     onClick={clearLogs}
                     sx={{
-                      position: 'absolute',
-                      top: 10,
-                      right: 28,
-                      zIndex: 2,
                       width: 36,
                       height: 36,
                       border: '1px solid #333',
@@ -252,10 +299,11 @@ export default function Home() {
                   >
                     <DeleteOutlineIcon fontSize="medium" />
                   </IconButton>
+                  </Box>
                   <SerialTerminal
                     serial_messages={logs}
                     listRef={listRefMain}
-                    onScroll={handleScroll(listRefMain)}
+                    onScroll={handleScroll()}
                   />
                 </Box>
               </Resizable>
@@ -296,7 +344,7 @@ export default function Home() {
                 <SerialTerminal
                   serial_messages={focusLogs}
                   listRef={listRefFocus}
-                  onScroll={handleScroll(listRefFocus)}
+                  onScroll={handleScroll()}
                   onClickRow={onClickFocusLogs}
                 />
               </Box>
@@ -309,7 +357,7 @@ export default function Home() {
               onAppendLogs={() => appendLogs(10000)}
               onRegenerateLogs={regenerateLogs}
               isAutoScrollEnabled={isAutoScrollEnabled}
-              onToggleAutoScroll={() => setIsAutoScrollEnabled(prev => !prev)}
+              onToggleAutoScroll={onToggleAutoScrollFromLogs}
               onClickClearLog={clearLogs}
               onClickClearFocusLog={clearFocusLogs}
               onClickRefreshAll={onClickRefreshAll}
