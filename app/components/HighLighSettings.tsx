@@ -147,7 +147,7 @@ const HighLighSettings: React.FC = () => {
                                         whiteSpace: 'nowrap',
                                         lineHeight: 1,
                                     }}>
-                                        {label}
+                                        {label === 'Remove' ? '' : label}
                                     </Box>
                                 </Box>
                             </TableCell>
