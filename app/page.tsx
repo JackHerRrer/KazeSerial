@@ -412,11 +412,6 @@ export default function Home() {
             <ControlPanel 
               onAppendLogs={() => appendLogs(10000)}
               onRegenerateLogs={regenerateLogs}
-              isAutoScrollEnabled={isMainAutoScrollEnabled}
-              onToggleAutoScroll={onToggleAutoScrollFromLogs}
-              onClickClearLog={clearLogs}
-              onClickClearFocusLog={clearFocusLogs}
-              onClickRefreshAll={onClickRefreshAll}
               logs={logs}
               focusLogs={focusLogs}
             />

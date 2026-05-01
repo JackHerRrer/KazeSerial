@@ -1,13 +1,12 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import SerialSettings from './SerialSettings';
 import HighLighSettings from './HighLighSettings';
-import ButtonGroup from '@mui/material/ButtonGroup';
 import FileSettings from './FileSettings';
 import { SerialMessage } from '../types/SerialMessage';
 
@@ -47,11 +46,6 @@ function a11yProps(index: number) {
 interface ControlPanelProps {
   onAppendLogs: () => void;
   onRegenerateLogs: () => void;
-  isAutoScrollEnabled: boolean;
-  onToggleAutoScroll: () => void;
-  onClickClearLog : () => void;
-  onClickClearFocusLog : () => void;
-  onClickRefreshAll : () => void;
   logs: SerialMessage[];
   focusLogs: SerialMessage[];
 }
@@ -59,11 +53,6 @@ interface ControlPanelProps {
 const ControlPanel: React.FC<ControlPanelProps> = ({
   onAppendLogs,
   onRegenerateLogs,
-  isAutoScrollEnabled,
-  onToggleAutoScroll,
-  onClickClearLog,
-  onClickClearFocusLog,
-  onClickRefreshAll,
   logs,
   focusLogs
 }) => {
@@ -72,10 +61,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
   };
-  const onClearAllLogs = useCallback(() => {
-    onClickClearLog();
-    onClickClearFocusLog();
-  }, [onClickClearLog, onClickClearFocusLog]);
 
   return (
     <Box sx={{ width: '100%', borderLeft: '1px solid #333' }}>
@@ -104,27 +89,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         <FileSettings logs={logs} focusLogs={focusLogs} />
       </TabPanel>
       <Box sx={{ p:3 }}>
-        <ButtonGroup variant="outlined" size="small" aria-label="Basic button group" sx={{ pb:2 }}>
-          <Button onClick={onClearAllLogs}>
-            Clear All Logs
-          </Button>
-          <Button onClick={onClickClearLog}>
-            Clear Logs
-          </Button>
-          <Button onClick={onClickClearFocusLog}>
-            Clear Focus Logs
-          </Button>
-        </ButtonGroup>
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 , pb:2}}>
-            <Button  variant="outlined" size="small"  onClick={onToggleAutoScroll}>
-            {isAutoScrollEnabled ? 'Disable Auto-Scroll' : 'Enable Auto-Scroll'}
-            </Button>
-        </Box>
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 , pb:2}}>
-          <Button variant="outlined" size="small" onClick={onClickRefreshAll} >
-            Refresh highlights on whole sequence
-          </Button>
-        </Box>
         <HighLighSettings />
       </Box>
     </Box>
