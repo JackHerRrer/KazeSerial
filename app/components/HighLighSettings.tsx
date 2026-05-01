@@ -23,11 +23,12 @@ interface HighligtConfig {
   color: string;
   is_regex: boolean;
   whole_line: boolean;
-    remove: boolean;
+  focus: boolean;
+  remove: boolean;
 }
 
 const OPTION_COLUMN_WIDTH = 36;
-const OPTION_LABELS = ['Color', 'Regexp', 'Whole line', 'Remove'] as const;
+const OPTION_LABELS = ['Color', 'Regexp', 'Whole line', 'Focus', 'Remove'] as const;
 const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
 const ACTION_COLUMN_WIDTH = 36;
 
@@ -81,7 +82,15 @@ const HighLighSettings: React.FC = () => {
             const result = await readTextFile(filePath, { baseDir: BaseDirectory.AppConfig });
             const highlights = JSON.parse(result);
             let tmpArr: HighligtConfig[] = [];
-            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color, is_regex: h.is_regex ?? true, whole_line: h.whole_line ?? false, remove: h.remove ?? false }));
+            highlights.forEach((h:HighligtConfig) => tmpArr.push({
+                id: h.id,
+                text: h.text,
+                color: h.color,
+                is_regex: h.is_regex ?? true,
+                whole_line: h.whole_line ?? false,
+                focus: h.remove ? false : h.focus ?? true,
+                remove: h.remove ?? false,
+            }));
             setHighlights(tmpArr);
         } catch (e) {
             console.log('Erreur lors du chargement : ' + e);
@@ -93,10 +102,10 @@ const HighLighSettings: React.FC = () => {
     }, []);
     const handleAddHighlight = async () => {
         if(highlights == undefined) {
-            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false, remove: false }]);
+            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false, focus: true, remove: false }]);
             return;
         };
-        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false, remove: false }]);
+        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true, whole_line: false, focus: true, remove: false }]);
     };
 
     const handleRemoveHighlight = (id: number) => {
@@ -119,9 +128,14 @@ const HighLighSettings: React.FC = () => {
         setHighlights(highlights.map(f => f.id === id ? { ...f, whole_line: value } : f));
     };
 
+    const handleHighlightFocusChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => f.id === id ? { ...f, focus: value } : f));
+    };
+
     const handleHighlightRemoveChange = (id: number, value: boolean) => {
         if(highlights == undefined) return;
-        setHighlights(highlights.map(f => f.id === id ? { ...f, remove: value } : f));
+        setHighlights(highlights.map(f => f.id === id ? { ...f, remove: value, focus: value ? false : f.focus } : f));
     };
 
     return (
@@ -234,6 +248,19 @@ const HighLighSettings: React.FC = () => {
                             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                                 <Checkbox
                                     size="small"
+                                    checked={filter.focus}
+                                    disabled={filter.remove}
+                                    onChange={(e) => handleHighlightFocusChange(filter.id, e.target.checked)}
+                                />
+                            </Box>
+                        </TableCell>
+                        <TableCell
+                            align="center"
+                            sx={{ width: OPTION_COLUMN_WIDTH, minWidth: OPTION_COLUMN_WIDTH, maxWidth: OPTION_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <Checkbox
+                                    size="small"
                                     checked={filter.remove}
                                     onChange={(e) => handleHighlightRemoveChange(filter.id, e.target.checked)}
                                 />
@@ -252,7 +279,7 @@ const HighLighSettings: React.FC = () => {
                     </TableRow>
                     ))}
                     <TableRow sx={{ '& td, & th': { borderBottom: 0 } }}>
-                        <TableCell colSpan={6} align="center" sx={{ p: 0 }}>
+                        <TableCell colSpan={7} align="center" sx={{ p: 0 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 34 }}>
                                 <IconButton size="small" sx={{ p: 0.5 }} onClick={handleAddHighlight}>
                                     <AddIcon />

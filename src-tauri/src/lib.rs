@@ -14,6 +14,7 @@ struct HighlightMessage {
     color: String,
     is_regex: bool,
     whole_line: bool,
+    focus: bool,
     remove: bool,
 }
 
@@ -24,6 +25,7 @@ struct HighlightSettings {
     color: String,
     is_regex: bool,
     whole_line: bool,
+    focus: bool,
     remove: bool,
     regex: Option<Regex>,
 }
@@ -43,12 +45,12 @@ struct AppState {
     message_id_counter: Arc<AtomicU64>,
 }
 
-async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Payload, bool) {
+async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payload {
     let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
     let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
     let rawline = input_line.clone();
     let mut line = input_line;
-    let mut matched = false;
+    let mut matched_for_focus = false;
     let mut should_send_raw = false;
     let mut removed_line = false;
     // Applique le surlignage côté Rust
@@ -64,7 +66,6 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Paylo
                     if hl.whole_line {
                         line.clear();
                         removed_line = true;
-                        matched = true;
                         should_send_raw = true;
                         break;
                     } else if hl.is_regex {
@@ -93,27 +94,29 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> (Paylo
                         );
                     }
                 }
-                matched = true;
+                if hl.focus && !hl.remove {
+                    matched_for_focus = true;
+                }
                 should_send_raw = true;
             }
         }
     }
     if should_send_raw {
-        return (Payload {
+        return Payload {
             id: message_id,
             message: line,
-            matched,
+            matched: matched_for_focus,
             rawline:Some(rawline),
             removed_line,
-        }, should_send_raw);
+        };
     }else{
-        return (Payload {
+        return Payload {
             id: message_id,
             message: line,
-            matched,
+            matched: matched_for_focus,
             rawline:None,
             removed_line,
-        }, should_send_raw);
+        };
     }
 }
 
@@ -125,15 +128,11 @@ async fn add_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<
     let mut logs_line_focus: Vec<Payload> = Vec::new();
     // Applique les regles de highlight/remove configurees
     for line in lines{
-        let should_send_raw ;
-        let cur_payload: Payload;
-        (cur_payload,should_send_raw) = parse_log_line(line.clone(), app_handle.clone()).await;
-        if should_send_raw {
-            logs_line.push(cur_payload.clone());
-            logs_line_focus.push(cur_payload);
-        }else{
-            logs_line.push(cur_payload);
+        let cur_payload = parse_log_line(line.clone(), app_handle.clone()).await;
+        if cur_payload.matched {
+            logs_line_focus.push(cur_payload.clone());
         }
+        logs_line.push(cur_payload);
     }
 
     let _ = app_handle.emit(
@@ -172,6 +171,7 @@ async fn set_highlights(
             color: elem.color,
             is_regex: elem.is_regex,
             whole_line: elem.whole_line,
+            focus: if elem.remove { false } else { elem.focus },
             remove: elem.remove,
             regex: cur_regex,
         });
@@ -249,7 +249,7 @@ async fn open_port(
                                     //let s = String::from_utf8_lossy(&line_buffer);
                                     //let mut line = regex_eol.replace_all(&s, "").to_string();
                                     let line = String::from_utf8_lossy(&line_buffer).to_string();
-                                    let (cur_payload, _) = parse_log_line(line.clone(), app_handle.clone()).await;
+                                    let cur_payload = parse_log_line(line.clone(), app_handle.clone()).await;
                                     let _ = app_handle.emit(
                                         "serial-data",
                                         cur_payload,
