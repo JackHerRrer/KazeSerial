@@ -45,10 +45,10 @@ const REMOVE_COLUMN_WIDTH = 36;
 const OPTION_COLUMNS = [
         { label: 'Color', width: COLOR_COLUMN_WIDTH },
         { label: 'Regexp', width: REGEX_COLUMN_WIDTH },
+    { label: 'Focus', width: FOCUS_COLUMN_WIDTH },
+    { label: 'Remove', width: REMOVE_COLUMN_WIDTH },
         { label: 'Select', width: SELECT_COLUMN_WIDTH },
         { label: 'Custom', width: CUSTOM_COLUMN_WIDTH },
-        { label: 'Focus', width: FOCUS_COLUMN_WIDTH },
-        { label: 'Remove', width: REMOVE_COLUMN_WIDTH },
 ] as const;
 const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
 const ACTION_COLUMN_WIDTH = 36;
@@ -214,34 +214,38 @@ const HighLighSettings: React.FC = () => {
                 <TableHead sx={{ overflow: 'visible' }}>
                     <TableRow sx={{ overflow: 'visible' }}>
                         <TableCell sx={{ verticalAlign: 'bottom' }}>Sentence</TableCell>
-                        {OPTION_COLUMNS.map((optionColumn) => (
-                            <TableCell
-                                key={optionColumn.label}
-                                sx={{
-                                    width: optionColumn.width,
-                                    minWidth: optionColumn.width,
-                                    maxWidth: optionColumn.width,
-                                    p: 0,
-                                    height: '90px',
-                                    overflow: 'visible',
-                                    verticalAlign: 'bottom',
-                                }}
-                            >
-                                <Box sx={{ position: 'relative', width: '100%', height: '100%', overflow: 'visible' }}>
-                                    <Box sx={{
-                                        position: 'absolute',
-                                        bottom: 8,
-                                        left: `${OPTION_LABEL_RIGHT_OFFSET_PX}px`,
-                                        transformOrigin: 'left bottom',
-                                        transform: 'rotate(-45deg)',
-                                        whiteSpace: 'nowrap',
-                                        lineHeight: 1,
-                                    }}>
-                                        {optionColumn.label}
+                        {OPTION_COLUMNS.map((optionColumn) => {
+                            const isHorizontalLabel = optionColumn.label === 'Select' || optionColumn.label === 'Custom';
+
+                            return (
+                                <TableCell
+                                    key={optionColumn.label}
+                                    sx={{
+                                        width: optionColumn.width,
+                                        minWidth: optionColumn.width,
+                                        maxWidth: optionColumn.width,
+                                        p: 0,
+                                        height: '90px',
+                                        overflow: 'visible',
+                                        verticalAlign: 'bottom',
+                                    }}
+                                >
+                                    <Box sx={{ position: 'relative', width: '100%', height: '100%', overflow: 'visible' }}>
+                                        <Box sx={{
+                                            position: 'absolute',
+                                            bottom: 8,
+                                            left: isHorizontalLabel ? '50%' : `${OPTION_LABEL_RIGHT_OFFSET_PX}px`,
+                                            transformOrigin: isHorizontalLabel ? 'center bottom' : 'left bottom',
+                                            transform: isHorizontalLabel ? 'translateX(-50%)' : 'rotate(-45deg)',
+                                            whiteSpace: 'nowrap',
+                                            lineHeight: 1,
+                                        }}>
+                                            {optionColumn.label}
+                                        </Box>
                                     </Box>
-                                </Box>
-                            </TableCell>
-                        ))}
+                                </TableCell>
+                            );
+                        })}
                         <TableCell
                             sx={{
                                 width: ACTION_COLUMN_WIDTH,
@@ -300,6 +304,31 @@ const HighLighSettings: React.FC = () => {
                         </TableCell>
                         <TableCell
                             align="center"
+                            sx={{ width: FOCUS_COLUMN_WIDTH, minWidth: FOCUS_COLUMN_WIDTH, maxWidth: FOCUS_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <Checkbox
+                                size="small"
+                                    checked={filter.focus}
+                                    disabled={filter.remove}
+                                    onChange={(e) => handleHighlightFocusChange(filter.id, e.target.checked)}
+                                />
+                            </Box>
+                        </TableCell>
+                        <TableCell
+                            align="center"
+                            sx={{ width: REMOVE_COLUMN_WIDTH, minWidth: REMOVE_COLUMN_WIDTH, maxWidth: REMOVE_COLUMN_WIDTH, p: 0 }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <Checkbox
+                                size="small"
+                                    checked={filter.remove}
+                                    onChange={(e) => handleHighlightRemoveChange(filter.id, e.target.checked)}
+                                />
+                            </Box>
+                        </TableCell>
+                        <TableCell
+                            align="center"
                             sx={{ width: SELECT_COLUMN_WIDTH, minWidth: SELECT_COLUMN_WIDTH, maxWidth: SELECT_COLUMN_WIDTH, p: 0.5 }}
                         >
                             <Select
@@ -326,7 +355,7 @@ const HighLighSettings: React.FC = () => {
                             sx={{ width: CUSTOM_COLUMN_WIDTH, minWidth: CUSTOM_COLUMN_WIDTH, maxWidth: CUSTOM_COLUMN_WIDTH, p: 0.5 }}
                         >
                             <TextField
-                                size="small"
+                                    size="small"
                                 placeholder="1,2"
                                 value={filter.custom_select}
                                 onChange={(e) => handleHighlightCustomSelectChange(filter.id, e.target.value)}
@@ -340,31 +369,6 @@ const HighLighSettings: React.FC = () => {
                                     },
                                 }}
                             />
-                        </TableCell>
-                        <TableCell
-                            align="center"
-                            sx={{ width: FOCUS_COLUMN_WIDTH, minWidth: FOCUS_COLUMN_WIDTH, maxWidth: FOCUS_COLUMN_WIDTH, p: 0 }}
-                        >
-                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                <Checkbox
-                                    size="small"
-                                    checked={filter.focus}
-                                    disabled={filter.remove}
-                                    onChange={(e) => handleHighlightFocusChange(filter.id, e.target.checked)}
-                                />
-                            </Box>
-                        </TableCell>
-                        <TableCell
-                            align="center"
-                            sx={{ width: REMOVE_COLUMN_WIDTH, minWidth: REMOVE_COLUMN_WIDTH, maxWidth: REMOVE_COLUMN_WIDTH, p: 0 }}
-                        >
-                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                <Checkbox
-                                    size="small"
-                                    checked={filter.remove}
-                                    onChange={(e) => handleHighlightRemoveChange(filter.id, e.target.checked)}
-                                />
-                            </Box>
                         </TableCell>
                         <TableCell
                             align="center"
