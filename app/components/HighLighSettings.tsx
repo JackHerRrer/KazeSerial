@@ -164,10 +164,10 @@ const HighLighSettings: React.FC = () => {
     }, []);
     const handleAddHighlight = async () => {
         if(highlights == undefined) {
-            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: true, select_mode: 'match', custom_select: '', focus: true, remove: false }]);
+            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12', is_regex: false, select_mode: 'match', custom_select: '', focus: true, remove: false }]);
             return;
         };
-        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: true, select_mode: 'match', custom_select: '', focus: true, remove: false }]);
+        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12', is_regex: false, select_mode: 'match', custom_select: '', focus: true, remove: false }]);
     };
 
     const handleRemoveHighlight = (id: number) => {
