@@ -44,6 +44,7 @@ const CUSTOM_COLUMN_WIDTH = 80;
 const FOCUS_COLUMN_WIDTH = 36;
 const REMOVE_COLUMN_WIDTH = 36;
 const DRAG_COLUMN_WIDTH = 28;
+const SENTENCE_MIN_COLUMN_WIDTH = 180;
 const OPTION_COLUMNS = [
         { label: 'Color', width: COLOR_COLUMN_WIDTH },
         { label: 'Regexp', width: REGEX_COLUMN_WIDTH },
@@ -54,6 +55,16 @@ const OPTION_COLUMNS = [
 ] as const;
 const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
 const ACTION_COLUMN_WIDTH = 36;
+const TABLE_MIN_WIDTH =
+    DRAG_COLUMN_WIDTH +
+    SENTENCE_MIN_COLUMN_WIDTH +
+    COLOR_COLUMN_WIDTH +
+    REGEX_COLUMN_WIDTH +
+    FOCUS_COLUMN_WIDTH +
+    REMOVE_COLUMN_WIDTH +
+    SELECT_COLUMN_WIDTH +
+    CUSTOM_COLUMN_WIDTH +
+    ACTION_COLUMN_WIDTH;
 
 
 export function useCustomHilightsState(p0?: never[]): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
@@ -270,9 +281,9 @@ const HighLighSettings: React.FC = () => {
     };
 
     return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 2 }}>
-        <Box sx={{ pr: 6, overflow: 'visible' }}>
-            <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0, width: '100%' }}>
+        <Box sx={{ overflowX: 'auto', overflowY: 'visible', width: '100%' }}>
+            <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH }}>
                 <TableHead sx={{ overflow: 'visible' }}>
                     <TableRow sx={{ overflow: 'visible' }}>
                         <TableCell
@@ -284,7 +295,7 @@ const HighLighSettings: React.FC = () => {
                                 borderBottom: 'none',
                             }}
                         />
-                        <TableCell sx={{ verticalAlign: 'bottom' }}>Sentence</TableCell>
+                        <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>Sentence</TableCell>
                         {OPTION_COLUMNS.map((optionColumn) => {
                             const isHorizontalLabel = optionColumn.label === 'Select' || optionColumn.label === 'Custom';
 
@@ -296,7 +307,7 @@ const HighLighSettings: React.FC = () => {
                                         minWidth: optionColumn.width,
                                         maxWidth: optionColumn.width,
                                         p: 0,
-                                        height: '90px',
+                                        height: '58px',
                                         overflow: 'visible',
                                         verticalAlign: 'bottom',
                                     }}
@@ -304,7 +315,7 @@ const HighLighSettings: React.FC = () => {
                                     <Box sx={{ position: 'relative', width: '100%', height: '100%', overflow: 'visible' }}>
                                         <Box sx={{
                                             position: 'absolute',
-                                            bottom: 8,
+                                            bottom: 2,
                                             left: isHorizontalLabel ? '50%' : `${OPTION_LABEL_RIGHT_OFFSET_PX}px`,
                                             transformOrigin: isHorizontalLabel ? 'center bottom' : 'left bottom',
                                             transform: isHorizontalLabel ? 'translateX(-50%)' : 'rotate(-45deg)',
@@ -375,7 +386,7 @@ const HighLighSettings: React.FC = () => {
                                 </IconButton>
                             </Box>
                         </TableCell>
-                        <TableCell>
+                        <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>
                             <TextField
                                 size="small"
                                 placeholder="Filter text"
