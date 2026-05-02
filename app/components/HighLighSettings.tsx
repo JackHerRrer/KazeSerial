@@ -14,6 +14,7 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import { invoke } from "@tauri-apps/api/core";
 
 import { writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
@@ -42,6 +43,7 @@ const SELECT_COLUMN_WIDTH = 110;
 const CUSTOM_COLUMN_WIDTH = 80;
 const FOCUS_COLUMN_WIDTH = 36;
 const REMOVE_COLUMN_WIDTH = 36;
+const DRAG_COLUMN_WIDTH = 28;
 const OPTION_COLUMNS = [
         { label: 'Color', width: COLOR_COLUMN_WIDTH },
         { label: 'Regexp', width: REGEX_COLUMN_WIDTH },
@@ -90,6 +92,8 @@ export function useCustomHilightsState(p0?: never[]): [HighligtConfig[] | undefi
 
 const HighLighSettings: React.FC = () => {
     const [highlights, setHighlights] = useCustomHilightsState([]);
+    const [draggedHighlightId, setDraggedHighlightId] = useState<number | null>(null);
+    const [dropIndicator, setDropIndicator] = useState<{ id: number; position: 'before' | 'after' } | null>(null);
 
     const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode => {
         return value === 'match' || value === 'whole_line' || value === 'custom';
@@ -207,12 +211,79 @@ const HighLighSettings: React.FC = () => {
         setHighlights(highlights.map(f => f.id === id ? { ...f, remove: value, focus: value ? false : f.focus } : f));
     };
 
+    const reorderHighlights = (sourceId: number, targetId: number, position: 'before' | 'after') => {
+        if (highlights == undefined || sourceId === targetId) return;
+
+        const sourceIndex = highlights.findIndex((h) => h.id === sourceId);
+        const targetIndex = highlights.findIndex((h) => h.id === targetId);
+
+        if (sourceIndex < 0 || targetIndex < 0) return;
+
+        const reordered = [...highlights];
+        const [moved] = reordered.splice(sourceIndex, 1);
+
+        const adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        const insertIndex = position === 'before' ? adjustedTargetIndex : adjustedTargetIndex + 1;
+
+        reordered.splice(insertIndex, 0, moved);
+        setHighlights(reordered);
+    };
+
+    const handleDragStart = (id: number) => (event: React.DragEvent<HTMLButtonElement>) => {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(id));
+        setDraggedHighlightId(id);
+        setDropIndicator(null);
+    };
+
+    const handleDragOverRow = (id: number) => (event: React.DragEvent<HTMLTableRowElement>) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+
+        const rowRect = event.currentTarget.getBoundingClientRect();
+        const rowMiddle = rowRect.top + rowRect.height / 2;
+        const position = event.clientY < rowMiddle ? 'before' : 'after';
+
+        setDropIndicator({ id, position });
+    };
+
+    const handleDropOnRow = (id: number) => (event: React.DragEvent<HTMLTableRowElement>) => {
+        event.preventDefault();
+
+        if (draggedHighlightId == undefined) {
+            setDropIndicator(null);
+            return;
+        }
+
+        const rowRect = event.currentTarget.getBoundingClientRect();
+        const rowMiddle = rowRect.top + rowRect.height / 2;
+        const position = event.clientY < rowMiddle ? 'before' : 'after';
+
+        reorderHighlights(draggedHighlightId, id, position);
+        setDraggedHighlightId(null);
+        setDropIndicator(null);
+    };
+
+    const handleDragEnd = () => {
+        setDraggedHighlightId(null);
+        setDropIndicator(null);
+    };
+
     return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 2 }}>
         <Box sx={{ pr: 6, overflow: 'visible' }}>
             <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible' }}>
                 <TableHead sx={{ overflow: 'visible' }}>
                     <TableRow sx={{ overflow: 'visible' }}>
+                        <TableCell
+                            sx={{
+                                width: DRAG_COLUMN_WIDTH,
+                                minWidth: DRAG_COLUMN_WIDTH,
+                                maxWidth: DRAG_COLUMN_WIDTH,
+                                p: 0,
+                                borderBottom: 'none',
+                            }}
+                        />
                         <TableCell sx={{ verticalAlign: 'bottom' }}>Sentence</TableCell>
                         {OPTION_COLUMNS.map((optionColumn) => {
                             const isHorizontalLabel = optionColumn.label === 'Select' || optionColumn.label === 'Custom';
@@ -258,7 +329,52 @@ const HighLighSettings: React.FC = () => {
                 </TableHead>
                 <TableBody>
                     {highlights?.map((filter) => (
-                    <TableRow key={filter.id}>
+                    <TableRow
+                        key={filter.id}
+                        onDragOver={handleDragOverRow(filter.id)}
+                        onDrop={handleDropOnRow(filter.id)}
+                        sx={{
+                            opacity: draggedHighlightId === filter.id ? 0.6 : 1,
+                            '& td:not(:first-of-type)': {
+                                borderTop: dropIndicator?.id === filter.id && dropIndicator.position === 'before' && draggedHighlightId !== filter.id
+                                    ? '2px solid'
+                                    : undefined,
+                                borderBottom: dropIndicator?.id === filter.id && dropIndicator.position === 'after' && draggedHighlightId !== filter.id
+                                    ? '2px solid'
+                                    : undefined,
+                                borderTopColor: dropIndicator?.id === filter.id && dropIndicator.position === 'before' && draggedHighlightId !== filter.id
+                                    ? 'primary.main'
+                                    : undefined,
+                                borderBottomColor: dropIndicator?.id === filter.id && dropIndicator.position === 'after' && draggedHighlightId !== filter.id
+                                    ? 'primary.main'
+                                    : undefined,
+                            },
+                        }}
+                    >
+                        <TableCell
+                            align="center"
+                            sx={{
+                                width: DRAG_COLUMN_WIDTH,
+                                minWidth: DRAG_COLUMN_WIDTH,
+                                maxWidth: DRAG_COLUMN_WIDTH,
+                                p: 0,
+                                borderBottom: 'none',
+                            }}
+                        >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <IconButton
+                                    size="small"
+                                    draggable
+                                    onDragStart={handleDragStart(filter.id)}
+                                    onDragEnd={handleDragEnd}
+                                    sx={{ p: 0.25, cursor: 'grab', '&:active': { cursor: 'grabbing' } }}
+                                    aria-label="Reorder filter"
+                                    title="Drag to reorder"
+                                >
+                                    <DragIndicatorIcon fontSize="small" />
+                                </IconButton>
+                            </Box>
+                        </TableCell>
                         <TableCell>
                             <TextField
                                 size="small"
@@ -383,7 +499,7 @@ const HighLighSettings: React.FC = () => {
                     </TableRow>
                     ))}
                     <TableRow sx={{ '& td, & th': { borderBottom: 0 } }}>
-                        <TableCell colSpan={8} align="center" sx={{ p: 0 }}>
+                        <TableCell colSpan={9} align="center" sx={{ p: 0 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 34 }}>
                                 <IconButton size="small" sx={{ p: 0.5 }} onClick={handleAddHighlight}>
                                     <AddIcon />
