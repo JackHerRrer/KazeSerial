@@ -156,28 +156,36 @@ const SerialSettings: React.FC = () => {
           </Select>
         </FormControl>
       </Box>
-      <FormControl fullWidth size="small">
-        <InputLabel id="baud-rate-select-label">Baud Rate</InputLabel>
-        <Select
-          labelId="baud-rate-select-label"
-          id="baud-rate-select"
-          value={baudRate}
-          label="Baud Rate"
-          onChange={handleBaudRateChange}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+        <FormControl fullWidth size="small" sx={{ flex: 1 }}>
+          <InputLabel id="baud-rate-select-label">Baud Rate</InputLabel>
+          <Select
+            labelId="baud-rate-select-label"
+            id="baud-rate-select"
+            value={baudRate}
+            label="Baud Rate"
+            onChange={handleBaudRateChange}
+          >
+            <MenuItem value={9600}>9600</MenuItem>
+            <MenuItem value={19200}>19200</MenuItem>
+            <MenuItem value={38400}>38400</MenuItem>
+            <MenuItem value={57600}>57600</MenuItem>
+            <MenuItem value={115200}>115200</MenuItem>
+            <MenuItem value={230400}>230400</MenuItem>
+            <MenuItem value={460800}>460800</MenuItem>
+            <MenuItem value={921600}>921600</MenuItem>
+          </Select>
+        </FormControl>
+        <Button
+          variant="outlined"
+          size="small"
+          color="primary"
+          onClick={handleConnect}
+          sx={{ whiteSpace: 'nowrap', height: 40 }}
         >
-          <MenuItem value={9600}>9600</MenuItem>
-          <MenuItem value={19200}>19200</MenuItem>
-          <MenuItem value={38400}>38400</MenuItem>
-          <MenuItem value={57600}>57600</MenuItem>
-          <MenuItem value={115200}>115200</MenuItem>
-          <MenuItem value={230400}>230400</MenuItem>
-          <MenuItem value={460800}>460800</MenuItem>
-          <MenuItem value={921600}>921600</MenuItem>
-        </Select>
-      </FormControl>
-      <Button variant="outlined" size="small" color="primary" onClick={handleConnect}>
-        {isConnected ? 'Disconnect' : 'Connect'}
-      </Button>
+          {isConnected ? 'Disconnect' : 'Connect'}
+        </Button>
+      </Box>
     </Box>
   );
 };
