@@ -73,15 +73,9 @@ export default function Home() {
 
 
   const appendLogs = (count: number) => {
-    let newLogs :String[] = generateLogs(count);
-    let logs_string:String[] = [];
-    for (let log of logs) {
-      logs_string.push(log.rawline ?? log.message);
-    }
-    let fulllogs = logs_string.concat(newLogs);
-    invoke<string[]>("add_logs_line", { lines: fulllogs })
-    .then((s) => {
-        //console.log("port opened:", s);
+    let newLogs: String[] = generateLogs(count);
+    invoke<void>("append_logs_line", { lines: newLogs })
+    .then(() => {
     }).catch((err: unknown) => {
         console.error(err);
     });
@@ -175,6 +169,12 @@ export default function Home() {
         let serialMessages: SerialMessage[] = e.payload;
         setLogs(serialMessages)
       });
+      const unlisten_serial_datas_append = listen<SerialMessage[]>("serial-datas-append", (e) => {
+        setLogs(prevLogs => [...prevLogs, ...e.payload]);
+      });
+      const unlisten_serial_datas_focus_append = listen<SerialMessage[]>("serial-datas-focus-append", (e) => {
+        setFocusLogs(prevLogs => [...prevLogs, ...e.payload]);
+      });
       const unlisten_serial_datas_focus = listen<SerialMessage[]>("serial-datas-focus", (e) => {
         //console.log(e);
         //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
@@ -185,6 +185,9 @@ export default function Home() {
       return () => {
         unlisten_serial_data.then(f => f());
         unlisten_serial_datas.then(f => f());
+        unlisten_serial_datas_focus.then(f => f());
+        unlisten_serial_datas_append.then(f => f());
+        unlisten_serial_datas_focus_append.then(f => f());
       }
     }, [] );
 

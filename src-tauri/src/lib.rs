@@ -1,4 +1,5 @@
 use regex::Regex;
+use rayon::prelude::*;
 use serialport::{SerialPort, SerialPortType};
 
 use std::collections::HashSet;
@@ -288,16 +289,14 @@ fn remove_custom_regex_match(captures: &regex::Captures<'_>, selected_groups: &[
     build_removed_segment(segment, &spans)
 }
 
-async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payload {
-    let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
-    let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
+fn process_line(input_line: String, highlights_vec: &[HighlightSettings], message_id: u64) -> Payload {
     let rawline = input_line.clone();
     let mut line = input_line;
     let mut matched_for_focus = false;
     let mut should_send_raw = false;
     let mut removed_line = false;
     // Applique le surlignage côté Rust
-    for hl in &highlights_vec {
+    for hl in highlights_vec {
         if !hl.text.is_empty() {
             let does_match = if hl.is_regex {
                 hl.regex.as_ref().map_or(false, |r| r.is_match(&line))
@@ -388,47 +387,65 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
         }
     }
     if should_send_raw {
-        return Payload {
+        Payload {
             id: message_id,
             message: line,
             matched: matched_for_focus,
-            rawline:Some(rawline),
+            rawline: Some(rawline),
             removed_line,
-        };
-    }else{
-        return Payload {
+        }
+    } else {
+        Payload {
             id: message_id,
             message: line,
             matched: matched_for_focus,
-            rawline:None,
+            rawline: None,
             removed_line,
-        };
+        }
     }
+}
+
+async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payload {
+    let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
+    let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
+    process_line(input_line, &highlights_vec, message_id)
 }
 
 #[tauri::command]
 async fn add_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
-
     let app_handle = emitter.clone();
-    let mut logs_line: Vec<Payload> = Vec::new();
-    let mut logs_line_focus: Vec<Payload> = Vec::new();
-    // Applique les regles de highlight/remove configurees
-    for line in lines{
-        let cur_payload = parse_log_line(line.clone(), app_handle.clone()).await;
-        if cur_payload.matched {
-            logs_line_focus.push(cur_payload.clone());
-        }
-        logs_line.push(cur_payload);
-    }
+    let highlights_vec = app_handle.state::<AppState>().highlights.lock().await.clone();
+    let start_id = app_handle.state::<AppState>().message_id_counter.fetch_add(lines.len() as u64, Ordering::SeqCst);
 
-    let _ = app_handle.emit(
-        "serial-datas",
-        logs_line,
-    );
-    let _ = app_handle.emit(
-        "serial-datas-focus",
-        logs_line_focus,
-    );
+    let results: Vec<Payload> = lines
+        .into_par_iter()
+        .enumerate()
+        .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
+        .collect();
+
+    let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
+
+    let _ = app_handle.emit("serial-datas", results);
+    let _ = app_handle.emit("serial-datas-focus", focus);
+    Ok(())
+}
+
+#[tauri::command]
+async fn append_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
+    let app_handle = emitter.clone();
+    let highlights_vec = app_handle.state::<AppState>().highlights.lock().await.clone();
+    let start_id = app_handle.state::<AppState>().message_id_counter.fetch_add(lines.len() as u64, Ordering::SeqCst);
+
+    let results: Vec<Payload> = lines
+        .into_par_iter()
+        .enumerate()
+        .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
+        .collect();
+
+    let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
+
+    let _ = app_handle.emit("serial-datas-append", results);
+    let _ = app_handle.emit("serial-datas-focus-append", focus);
     Ok(())
 }
 
@@ -663,7 +680,8 @@ pub fn run() {
             open_port,
             close_port,
             set_highlights,
-            add_logs_line
+            add_logs_line,
+            append_logs_line
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

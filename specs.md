@@ -345,3 +345,32 @@ src-tauri/
 - **Auto-scroll**: Each panel independently tracks whether auto-scroll is enabled. A timestamp-based ref suppresses false negatives when programmatically scrolling.
 - **Persistence**: Highlight rules are saved to JSON on every change and restored on startup. The frontend owns the canonical rule state and pushes it to the backend.
 - **Resizable panels**: Both the horizontal split (left/right) and the vertical split (main/focus) are user-resizable via `re-resizable`.
+
+---
+
+## Batch Log Processing — Performance Design
+
+Processing large batches (e.g. 10 000 lines) must complete in well under a second. Three design rules ensure this:
+
+### 1. Single mutex acquisition per batch
+
+The highlight rules are protected by a mutex. Rather than locking it once per line, `add_logs_line` and `append_logs_line` lock it **once** for the entire batch, clone the rules, then release the lock before any processing begins. This eliminates thousands of async suspend/resume cycles.
+
+### 2. Parallel line processing with rayon
+
+The core `process_line` function is **pure and synchronous** — no I/O, no locking. This makes it safe to run in parallel via `rayon`, which distributes the work across all available CPU cores automatically.
+
+### 3. Bulk ID allocation
+
+Rather than incrementing the message ID counter once per line (causing contention between parallel threads), the entire batch reserves a contiguous ID range in a **single atomic operation**. Each thread then computes its own ID by simple addition with no further synchronization.
+
+### Append vs. replace
+
+Two separate commands handle different use cases:
+
+| Command | Frontend event | Frontend action |
+|---|---|---|
+| `add_logs_line` | `serial-datas` / `serial-datas-focus` | **Replaces** the full log array (used by refresh) |
+| `append_logs_line` | `serial-datas-append` / `serial-datas-focus-append` | **Appends** to the existing array (used by demo append and serial port) |
+
+This avoids resending thousands of existing lines to the backend just to append new ones.
