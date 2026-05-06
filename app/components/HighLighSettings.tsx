@@ -618,21 +618,25 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: COLOR_COLUMN_WIDTH, minWidth: COLOR_COLUMN_WIDTH, maxWidth: COLOR_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <input
-                                                type="color"
-                                                value={filter.color.slice(0, 7)}
-                                                disabled={filter.remove || filter.advanced}
-                                                onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
-                                                style={{
-                                                    width: 26,
-                                                    height: 26,
-                                                    padding: 0,
-                                                    border: 'none',
-                                                    background: 'none',
-                                                    cursor: (filter.remove || filter.advanced) ? 'not-allowed' : 'pointer',
-                                                    opacity: filter.advanced ? 0.2 : filter.remove ? 0.45 : 1,
-                                                }}
-                                            />
+                                            <Tooltip title="Highlight color applied to matching text" placement="top" arrow>
+                                                <span>
+                                                    <input
+                                                        type="color"
+                                                        value={filter.color.slice(0, 7)}
+                                                        disabled={filter.remove || filter.advanced}
+                                                        onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
+                                                        style={{
+                                                            width: 26,
+                                                            height: 26,
+                                                            padding: 0,
+                                                            border: 'none',
+                                                            background: 'none',
+                                                            cursor: (filter.remove || filter.advanced) ? 'not-allowed' : 'pointer',
+                                                            opacity: filter.advanced ? 0.2 : filter.remove ? 0.45 : 1,
+                                                        }}
+                                                    />
+                                                </span>
+                                            </Tooltip>
                                         </Box>
                                     </TableCell>
                                     <TableCell
@@ -640,11 +644,13 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: REGEX_COLUMN_WIDTH, minWidth: REGEX_COLUMN_WIDTH, maxWidth: REGEX_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Checkbox
-                                                size="small"
-                                                checked={filter.is_regex}
-                                                onChange={(e) => handleHighlightIsRegexChange(filter.id, e.target.checked)}
-                                            />
+                                            <Tooltip title="Treat the sentence as a regular expression (regexp)" placement="top" arrow>
+                                                <Checkbox
+                                                    size="small"
+                                                    checked={filter.is_regex}
+                                                    onChange={(e) => handleHighlightIsRegexChange(filter.id, e.target.checked)}
+                                                />
+                                            </Tooltip>
                                         </Box>
                                     </TableCell>
                                     <TableCell
@@ -652,12 +658,16 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: FOCUS_COLUMN_WIDTH, minWidth: FOCUS_COLUMN_WIDTH, maxWidth: FOCUS_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Checkbox
-                                                size="small"
-                                                checked={filter.focus}
-                                                disabled={filter.remove}
-                                                onChange={(e) => handleHighlightFocusChange(filter.id, e.target.checked)}
-                                            />
+                                            <Tooltip title="Display the whole line in the focus panel" placement="top" arrow>
+                                                <span>
+                                                    <Checkbox
+                                                        size="small"
+                                                        checked={filter.focus}
+                                                        disabled={filter.remove}
+                                                        onChange={(e) => handleHighlightFocusChange(filter.id, e.target.checked)}
+                                                    />
+                                                </span>
+                                            </Tooltip>
                                         </Box>
                                     </TableCell>
                                     <TableCell
@@ -665,11 +675,13 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: REMOVE_COLUMN_WIDTH, minWidth: REMOVE_COLUMN_WIDTH, maxWidth: REMOVE_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Checkbox
-                                                size="small"
-                                                checked={filter.remove}
-                                                onChange={(e) => handleHighlightRemoveChange(filter.id, e.target.checked)}
-                                            />
+                                            <Tooltip title="Remove the text instead of highlighting it" placement="top" arrow>
+                                                <Checkbox
+                                                    size="small"
+                                                    checked={filter.remove}
+                                                    onChange={(e) => handleHighlightRemoveChange(filter.id, e.target.checked)}
+                                                />
+                                            </Tooltip>
                                         </Box>
                                     </TableCell>
                                     <TableCell
@@ -677,12 +689,16 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: WHOLE_LINE_COLUMN_WIDTH, minWidth: WHOLE_LINE_COLUMN_WIDTH, maxWidth: WHOLE_LINE_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Checkbox
-                                                size="small"
-                                                checked={filter.whole_line}
-                                                disabled={filter.advanced}
-                                                onChange={(e) => handleHighlightWholeLineChange(filter.id, e.target.checked)}
-                                            />
+                                            <Tooltip title="Highlight or remove the entire line instead of just the matched text" placement="top" arrow>
+                                                <span>
+                                                    <Checkbox
+                                                        size="small"
+                                                        checked={filter.whole_line}
+                                                        disabled={filter.advanced}
+                                                        onChange={(e) => handleHighlightWholeLineChange(filter.id, e.target.checked)}
+                                                    />
+                                                </span>
+                                            </Tooltip>
                                         </Box>
                                     </TableCell>
                                     <TableCell
@@ -690,12 +706,16 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: ADVANCED_COLUMN_WIDTH, minWidth: ADVANCED_COLUMN_WIDTH, maxWidth: ADVANCED_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Checkbox
-                                                size="small"
-                                                checked={filter.advanced}
-                                                disabled={!filter.is_regex}
-                                                onChange={(e) => handleHighlightAdvancedChange(filter.id, e.target.checked)}
-                                            />
+                                            <Tooltip title="Enable advanced mode to colorize individual regex capture groups with different colors (requires regex)" placement="top" arrow>
+                                                <span>
+                                                    <Checkbox
+                                                        size="small"
+                                                        checked={filter.advanced}
+                                                        disabled={!filter.is_regex}
+                                                        onChange={(e) => handleHighlightAdvancedChange(filter.id, e.target.checked)}
+                                                    />
+                                                </span>
+                                            </Tooltip>
                                         </Box>
                                     </TableCell>
                                     <TableCell
@@ -703,9 +723,11 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: ACTION_COLUMN_WIDTH, minWidth: ACTION_COLUMN_WIDTH, maxWidth: ACTION_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <IconButton size="small" sx={{ p: 0.5 }} onClick={() => handleRemoveHighlight(filter.id)}>
-                                                <DeleteIcon />
-                                            </IconButton>
+                                            <Tooltip title="Delete this rule" placement="top" arrow>
+                                                <IconButton size="small" sx={{ p: 0.5 }} onClick={() => handleRemoveHighlight(filter.id)}>
+                                                    <DeleteIcon />
+                                                </IconButton>
+                                            </Tooltip>
                                         </Box>
                                     </TableCell>
                                 </TableRow>
