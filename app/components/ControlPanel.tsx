@@ -63,7 +63,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   };
 
   return (
-    <Box sx={{ width: '100%', borderLeft: '1px solid #333' }}>
+    <Box sx={{ width: '100%', borderLeft: '1px solid #333', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tabValue} onChange={handleChange} aria-label="control panel tabs">
           <Tab label="Serial" {...a11yProps(0)} />
@@ -88,7 +88,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       <TabPanel value={tabValue} index={2}>
         <FileSettings logs={logs} focusLogs={focusLogs} />
       </TabPanel>
-      <Box sx={{ p:3 }}>
+      <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>
         <HighLighSettings />
       </Box>
     </Box>

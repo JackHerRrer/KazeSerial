@@ -257,11 +257,11 @@ export default function Home() {
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
         {/* Horizontal Container */}
-        <Container disableGutters maxWidth={false} sx={{ py: 0, height: '100vh', width:'100%', display:'flex', flexDirection: 'row' ,pl:0, pr:0}}>
+        <Container disableGutters maxWidth={false} sx={{ py: 0, height: '100vh', width:'100%', display:'flex', flexDirection: 'row', pl:0, pr:0, overflow: 'hidden' }}>
           {/* Horizontal resizable Container */}
           <Resizable minHeight='100%' maxWidth='90%' maxHeight='100%' defaultSize={{ width: '70%',height: '100%',}}>
             {/* Serial vertical Container */}
-            <Container disableGutters maxWidth={false} sx={{ py: 1, height: '100vh', width:'100%', display:'flex', flexDirection: 'column' ,pl:0, pr:0}}>
+            <Container disableGutters maxWidth={false} sx={{ py: 0, height: '100%', width:'100%', display:'flex', flexDirection: 'column', pl:0, pr:0, overflow: 'hidden' }}>
               {/* Main Serial Terminal */}
               <Resizable
                 minWidth='100%'
@@ -414,7 +414,7 @@ export default function Home() {
             </Container>
           </Resizable>
 
-          <Container disableGutters sx={{ height: '100vh' }}>
+          <Container disableGutters sx={{ height: '100vh', overflow: 'hidden' }}>
             {/* Control Panel */}
             <ControlPanel 
               onAppendLogs={() => appendLogs(10000)}
