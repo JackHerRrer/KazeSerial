@@ -14,6 +14,8 @@ import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import LastPageIcon from '@mui/icons-material/LastPage';
+import FirstPageIcon from '@mui/icons-material/FirstPage';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
@@ -71,6 +73,8 @@ export default function Home() {
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
 
+
+  const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
 
   const appendLogs = (count: number) => {
     let newLogs: String[] = generateLogs(count);
@@ -258,8 +262,31 @@ export default function Home() {
       <CssBaseline />
         {/* Horizontal Container */}
         <Container disableGutters maxWidth={false} sx={{ py: 0, height: '100vh', width:'100%', display:'flex', flexDirection: 'row', pl:0, pr:0, overflow: 'hidden' }}>
-          {/* Horizontal resizable Container */}
-          <Resizable minHeight='100%' maxWidth='90%' maxHeight='100%' defaultSize={{ width: '70%',height: '100%',}}>
+          {/* Terminals area — fills all remaining space */}
+          <Box sx={{ flex: 1, minWidth: 0, height: '100%', position: 'relative' }}>
+            {/* Toggle button straddling right border, vertically centered */}
+            <IconButton
+              size="medium"
+              onClick={() => setIsSettingsPanelOpen(v => !v)}
+              title={isSettingsPanelOpen ? 'Collapse settings' : 'Expand settings'}
+              sx={{
+                position: 'absolute',
+                top: '50%',
+                right: -18,
+                transform: 'translateY(-50%)',
+                zIndex: 10,
+                width: 36,
+                height: 36,
+                bgcolor: 'background.paper',
+                border: '1px solid #444',
+                borderRadius: '50%',
+                '&:hover': { bgcolor: 'action.hover' },
+              }}
+            >
+              {isSettingsPanelOpen ? <LastPageIcon fontSize="medium" /> : <FirstPageIcon fontSize="medium" />}
+            </IconButton>
+            {/* Content with overflow clipping */}
+            <Box sx={{ height: '100%', overflow: 'hidden' }}>
             {/* Serial vertical Container */}
             <Container disableGutters maxWidth={false} sx={{ py: 0, height: '100%', width:'100%', display:'flex', flexDirection: 'column', pl:0, pr:0, overflow: 'hidden' }}>
               {/* Main Serial Terminal */}
@@ -412,17 +439,50 @@ export default function Home() {
                 />
               </Box>
             </Container>
-          </Resizable>
+            </Box>
+          </Box>
 
-          <Container disableGutters sx={{ height: '100vh', overflow: 'hidden' }}>
-            {/* Control Panel */}
-            <ControlPanel 
-              onAppendLogs={() => appendLogs(10000)}
-              onRegenerateLogs={regenerateLogs}
-              logs={logs}
-              focusLogs={focusLogs}
-            />
-          </Container>
+          {/* Settings panel — resizable when open, thin strip when closed */}
+          {isSettingsPanelOpen ? (
+            <Resizable
+              enable={{ left: true, top: false, right: false, bottom: false, topLeft: false, topRight: false, bottomLeft: false, bottomRight: false }}
+              minWidth={220}
+              maxWidth='70%'
+              defaultSize={{ width: '30%', height: '100%' }}
+              style={{ height: '100%', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+            >
+              <Box sx={{ flex: 1, overflow: 'hidden' }}>
+                <ControlPanel
+                  onAppendLogs={() => appendLogs(10000)}
+                  onRegenerateLogs={regenerateLogs}
+                  logs={logs}
+                  focusLogs={focusLogs}
+                />
+              </Box>
+            </Resizable>
+          ) : (
+            <Box
+              sx={{
+                height: '100%',
+                flexShrink: 0,
+                borderLeft: '1px solid #333',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'flex-start',
+                pt: 5,
+                px: 1,
+              }}
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                {'Settings'.split('').map((char, i) => (
+                  <Typography key={i} sx={{ fontSize: '0.875rem', color: 'text.secondary', letterSpacing: 0, userSelect: 'none', lineHeight: 1.3 }}>
+                    {char}
+                  </Typography>
+                ))}
+              </Box>
+            </Box>
+          )}
         </Container>
     </ThemeProvider>
   );
