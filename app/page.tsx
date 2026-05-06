@@ -67,6 +67,7 @@ export default function Home() {
   
   const [logs, setLogs] = useState<SerialMessage[]>(initialLogs);
   const [focusLogs, setFocusLogs] = useState<SerialMessage[]>(initialLogs);
+  const [selectedMainLineId, setSelectedMainLineId] = useState<number | null>(null);
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
 
@@ -128,6 +129,7 @@ export default function Home() {
         behavior: "smooth", // Animation fluide
         index: index
       });
+      setSelectedMainLineId(prev => prev === id ? null : id);
     }
   };
   const onClickRefreshAll = () => {
@@ -335,6 +337,8 @@ export default function Home() {
                     serial_messages={logs}
                     listRef={listRefMain}
                     onScroll={handleScroll(isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
+                    selectedLineId={selectedMainLineId}
+                    onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
                   />
                 </Box>
               </Resizable>

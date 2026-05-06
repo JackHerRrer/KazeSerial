@@ -1,6 +1,6 @@
 'use client';
 
-import React, { type Ref,  type UIEventHandler } from 'react';
+import React, { useState, type Ref,  type UIEventHandler } from 'react';
 import { List, type ListImperativeAPI } from 'react-window';
 import Box from '@mui/material/Box';
 import RowComponent from './SerialTerminalLine';
@@ -13,6 +13,7 @@ interface SerialTerminalProps {
   listRef?: Ref<ListImperativeAPI>;
   onScroll: UIEventHandler<HTMLDivElement>;
   onClickRow?: (message_id: number) => void;
+  selectedLineId?: number | null;
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
@@ -22,7 +23,18 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   listRef,
   onScroll,
   onClickRow,
+  selectedLineId: externalSelectedLineId,
 }) => {
+  const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
+
+  const selectedLineId = externalSelectedLineId !== undefined ? externalSelectedLineId : internalSelectedLineId;
+
+  const handleClickRow = (message_id: number) => {
+    if (externalSelectedLineId === undefined) {
+      setInternalSelectedLineId(prev => prev === message_id ? null : message_id);
+    }
+    onClickRow?.(message_id);
+  };
 
   return (
     <Box
@@ -46,7 +58,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
             return line?.removed_line ? 0 : 20;
           }}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages, onClickRow}} // Pass serial_messages via rowProps
+          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId }}
           overscanCount={10}
           listRef={listRef}
           onScroll={onScroll}
