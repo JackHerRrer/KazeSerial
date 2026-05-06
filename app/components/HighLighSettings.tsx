@@ -14,6 +14,7 @@ import Tooltip from '@mui/material/Tooltip';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
 import { invoke } from "@tauri-apps/api/core";
 
 import { writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
@@ -709,15 +710,13 @@ const HighLighSettings: React.FC = () => {
                                     </TableCell>
                                 </TableRow>
 
-                                {filter.advanced && filter.advanced_selections.map((selection, selIdx) => (
+                                {filter.advanced && (
                                     <TableRow
-                                        key={`${filter.id}-advanced-${selection.id}`}
                                         onDragOver={handleDragOverRow(filter.id)}
                                         onDrop={handleDropOnRow(filter.id)}
                                         sx={{ opacity: draggedHighlightId === filter.id ? 0.6 : 1 }}
                                     >
                                         <TableCell
-                                            align="center"
                                             sx={{
                                                 width: DRAG_COLUMN_WIDTH,
                                                 minWidth: DRAG_COLUMN_WIDTH,
@@ -726,67 +725,70 @@ const HighLighSettings: React.FC = () => {
                                                 borderBottom: 'none',
                                             }}
                                         />
-                                        <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH, p: 0.5, borderBottom: selIdx === filter.advanced_selections.length - 1 ? undefined : 'none' }}>
-                                            <Box sx={{ minHeight: 32 }} />
-                                        </TableCell>
                                         <TableCell
-                                            align="center"
-                                            sx={{ width: COLOR_COLUMN_WIDTH, minWidth: COLOR_COLUMN_WIDTH, maxWidth: COLOR_COLUMN_WIDTH, p: 0, borderBottom: selIdx === filter.advanced_selections.length - 1 ? undefined : 'none' }}
+                                            colSpan={8}
+                                            sx={{ p: 0.5, pl: 4 }}
                                         >
-                                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                                <input
-                                                    type="color"
-                                                    value={selection.color.slice(0, 7)}
-                                                    disabled={filter.remove}
-                                                    onChange={(e) =>
-                                                        handleAdvancedSelectionChange(filter.id, selection.id, 'color', e.target.value)
-                                                    }
-                                                    style={{
-                                                        width: 26,
-                                                        height: 26,
-                                                        padding: 0,
-                                                        border: 'none',
-                                                        background: 'none',
-                                                        cursor: filter.remove ? 'not-allowed' : 'pointer',
-                                                        opacity: filter.remove ? 0.45 : 1,
-                                                    }}
-                                                />
-                                            </Box>
-                                        </TableCell>
-                                        <TableCell colSpan={5} sx={{ p: 0.5, borderBottom: selIdx === filter.advanced_selections.length - 1 ? undefined : 'none' }}>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                <Tooltip
-                                                    title="Enter the numbers of the capture groups from your regular expression that you want to colorize, separated by commas (e.g. 1,2). In a regex, parentheses define groups numbered left to right starting at 1. For example, with the regex '(\w+): (\d+)', group 1 matches the word before the colon and group 2 matches the number after it."
-                                                    placement="top"
-                                                    arrow
-                                                >
-                                                    <span>
-                                                <TextField
-                                                    size="small"
-                                                    placeholder="1,2"
-                                                    value={selection.selector}
-                                                    onChange={(e) =>
-                                                        handleAdvancedSelectionChange(filter.id, selection.id, 'selector', e.target.value)
-                                                    }
-                                                    disabled={filter.remove}
-                                                    sx={{
-                                                        width: 110,
-                                                        '& .MuiInputBase-input': {
-                                                            fontSize: '0.75rem',
-                                                            py: 0.5,
-                                                        },
-                                                    }}
-                                                />
-                                                    </span>
-                                                </Tooltip>
-                                                <IconButton
-                                                    size="small"
-                                                    sx={{ p: 0.5 }}
-                                                    onClick={() => handleRemoveAdvancedSelection(filter.id, selection.id)}
-                                                    disabled={filter.advanced_selections.length <= 1}
-                                                >
-                                                    <DeleteIcon fontSize="small" />
-                                                </IconButton>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                                                <SubdirectoryArrowRightIcon sx={{ color: 'text.disabled', fontSize: '1.1rem', mr: 0.5 }} />
+                                                {filter.advanced_selections.map((selection) => (
+                                                    <Box
+                                                        key={selection.id}
+                                                        sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}
+                                                    >
+                                                        <input
+                                                            type="color"
+                                                            value={selection.color.slice(0, 7)}
+                                                            disabled={filter.remove}
+                                                            onChange={(e) =>
+                                                                handleAdvancedSelectionChange(filter.id, selection.id, 'color', e.target.value)
+                                                            }
+                                                            style={{
+                                                                width: 26,
+                                                                height: 26,
+                                                                padding: 0,
+                                                                border: 'none',
+                                                                background: 'none',
+                                                                cursor: filter.remove ? 'not-allowed' : 'pointer',
+                                                                opacity: filter.remove ? 0.45 : 1,
+                                                                flexShrink: 0,
+                                                            }}
+                                                        />
+                                                        <Tooltip
+                                                            title="Enter the numbers of the capture groups from your regular expression that you want to colorize, separated by commas (e.g. 1,2). In a regex, parentheses define groups numbered left to right starting at 1. For example, with the regex '(\w+): (\d+)', group 1 matches the word before the colon and group 2 matches the number after it."
+                                                            placement="top"
+                                                            arrow
+                                                        >
+                                                            <span>
+                                                                <TextField
+                                                                    size="small"
+                                                                    placeholder="1,2"
+                                                                    value={selection.selector}
+                                                                    onChange={(e) =>
+                                                                        handleAdvancedSelectionChange(filter.id, selection.id, 'selector', e.target.value)
+                                                                    }
+                                                                    disabled={filter.remove}
+                                                                    sx={{
+                                                                        width: 55,
+                                                                        '& .MuiInputBase-input': {
+                                                                            fontSize: '0.75rem',
+                                                                            py: 0.5,
+                                                                        },
+                                                                    }}
+                                                                />
+                                                            </span>
+                                                        </Tooltip>
+                                                        {filter.advanced_selections.length > 1 && (
+                                                            <IconButton
+                                                                size="small"
+                                                                sx={{ p: 0.25 }}
+                                                                onClick={() => handleRemoveAdvancedSelection(filter.id, selection.id)}
+                                                            >
+                                                                <DeleteIcon fontSize="small" />
+                                                            </IconButton>
+                                                        )}
+                                                    </Box>
+                                                ))}
                                                 <IconButton
                                                     size="small"
                                                     sx={{ p: 0.5 }}
@@ -796,9 +798,8 @@ const HighLighSettings: React.FC = () => {
                                                 </IconButton>
                                             </Box>
                                         </TableCell>
-                                        <TableCell sx={{ width: ACTION_COLUMN_WIDTH, minWidth: ACTION_COLUMN_WIDTH, maxWidth: ACTION_COLUMN_WIDTH, p: 0, borderBottom: selIdx === filter.advanced_selections.length - 1 ? undefined : 'none' }} />
                                     </TableRow>
-                                ))}
+                                )}
                             </React.Fragment>
                         ))}
                         <TableRow sx={{ '& td, & th': { borderBottom: 0 } }}>
