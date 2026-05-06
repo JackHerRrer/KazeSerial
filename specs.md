@@ -1,0 +1,347 @@
+# KazeSerial — Application Specifications
+
+## Overview
+
+KazeSerial is a desktop serial terminal application built with **Tauri v2** (Rust backend) and **Next.js / React** (frontend), using **Material UI (MUI)** as the component library. It allows users to monitor serial port output, apply color highlight/filter rules, and export logs.
+
+The app uses a **dark theme** throughout.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Desktop shell | Tauri v2 |
+| Frontend framework | Next.js (static export) |
+| UI component library | Material UI (MUI) v5, dark theme |
+| Virtualized list | `react-window` (custom fork with `rowComponent` API) |
+| Resizable panels | `re-resizable` |
+| Backend language | Rust |
+| Serial port | `serialport` crate |
+| Regex engine | `regex` crate |
+| Async runtime | Tokio |
+| Persistence | `tauri-plugin-fs` (AppConfig directory) |
+| File dialogs | `tauri-plugin-dialog` |
+
+---
+
+## Layout
+
+The main window (default 1600×1200, resizable) is divided horizontally into two resizable panes:
+
+### Left pane (default ~70% width)
+A vertical flex column containing:
+
+1. **Main Serial Terminal** (top, default ~70% height, vertically resizable)
+   - Displays all incoming log lines
+   - Has an auto-scroll toggle button (arrow-down icon, top-right overlay)
+   - Has a clear button (delete icon, top-right overlay)
+   - Has a "refresh/reprocess" button (refresh icon, top-right overlay) that reprocesses all raw lines through current highlight rules
+
+2. **"focus" label** — small monospace label between the two terminals
+
+3. **Focus Serial Terminal** (bottom, fills remaining height)
+   - Displays only lines that matched a highlight rule with `focus = true`
+   - Has an auto-scroll toggle button
+   - Has a clear button
+
+### Right pane (fills remaining width)
+A **Control Panel** with three tabs:
+- **Serial** — serial port configuration
+- **Demo** — demo log generation buttons
+- **File** — log file import/export
+
+---
+
+## Serial Terminal Component
+
+### Behavior
+- Uses a virtualized list (`react-window`) for performance with large log counts
+- Each row is 20px tall; rows with `removed_line = true` have height 0 (invisible)
+- Log text is rendered as raw HTML via `dangerouslySetInnerHTML` to support `<span style="color:...">` highlight markup
+- Font: monospace, 0.875rem, color `#d4d4d4`, background `#1e1e1e`
+
+### Auto-scroll
+- When enabled, the list automatically scrolls to the last row when new logs arrive
+- Scrolling up manually disables auto-scroll (detected when `scrollHeight - clientHeight - scrollTop > 30`)
+- Scrolling back to the bottom re-enables it
+- A debounce ref (`ignoreScrollUntilRef`) prevents false disables when programmatically scrolling
+
+### Line selection / highlight
+- Clicking a line highlights the entire row with `rgba(255,255,255,0.12)` background
+- Clicking the same line again deselects it
+- Text selection (copy-paste) is preserved: if `window.getSelection().toString()` is non-empty when `mouseup/click` fires, the click is ignored
+- The selected line ID can be controlled externally via a `selectedLineId` prop (used by the focus panel)
+
+### Focus panel click behavior
+- Clicking a line in the **focus panel** scrolls the **main panel** to the corresponding line (matched by `id`) using `align: "center", behavior: "smooth"`
+- The corresponding line in the main panel is also highlighted
+
+---
+
+## Serial Message Type
+
+```typescript
+type SerialMessage = {
+  id: number;           // unique monotonically increasing ID
+  message: string;      // HTML string (may contain <span> tags)
+  matched: boolean;     // true if matched a focus rule
+  rawline?: string;     // original unprocessed line (present if a rule matched)
+  removed_line?: boolean; // true if the whole line was removed
+};
+```
+
+---
+
+## Control Panel
+
+A tabbed panel on the right side.
+
+### Tab: Serial
+Serial port configuration:
+- **Port selector** — dropdown listing available ports with auto-detection on mount. Each entry shows `portName - deviceLabel` (manufacturer + product name for USB, or generic label). A refresh button re-lists ports.
+- **Baud rate selector** — dropdown with values: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600. Default: 115200.
+- **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command.
+
+### Tab: Demo
+Buttons for development/testing:
+- **Append 10 Logs** — generates and processes 10000 fake UART log lines
+- **Regenerate Logs** — resets timer and generates 10 fake lines
+
+Fake log format: `[timestamp] TYPE: message` where TYPE is one of ERROR/WARN/INFO/DEBUG.
+
+### Tab: File
+- **Save logs to file** — opens a save dialog (`.log` extension), writes raw lines
+- **Save focus logs to file** — same for focus logs
+- **Load log files** — opens a file picker, reads content and sends lines to backend via `add_logs_line`
+
+---
+
+## Highlight Settings Component
+
+A table-based UI to define highlight/filter rules, persisted to `highlight_settings.json` in the app config directory.
+
+### Table structure
+
+Each row represents one rule. Columns (left to right):
+
+| Column | Width | Description |
+|---|---|---|
+| Drag handle | 28px | `DragIndicatorIcon`, draggable for reordering |
+| Sentence | min 180px | Text input for the pattern |
+| Color | 36px | Native `<input type="color">` |
+| Regexp | 36px | Checkbox — treat sentence as regex |
+| Focus | 36px | Checkbox — send matching lines to focus panel |
+| Remove | 36px | Checkbox — remove matched text from output |
+| Whole line | 36px | Checkbox — apply highlight/removal to entire line |
+| Advanced | 36px | Checkbox — enable per-capture-group coloring (requires Regexp) |
+| Delete | 36px | `DeleteIcon` button |
+
+Column headers are rotated **-45°** from the bottom-left corner with `overflow: visible`. The table has a horizontal scrollbar when the panel is too narrow.
+
+### Tooltips
+Every option cell has a MUI `Tooltip` (placement `top`, with arrow):
+- **Color**: *"Highlight color applied to matching text"*
+- **Regexp**: *"Treat the sentence as a regular expression (regex)"*
+- **Focus**: *"Display the full matching line in the focus panel"*
+- **Remove**: *"Remove only the matched text from the line, not the entire line"*
+- **Whole line**: *"Apply the highlight or removal to the entire line instead of just the matched text"*
+- **Advanced**: *"Enable advanced mode to colorize individual regex capture groups with different colors (requires regex)"*
+- **Delete**: *"Delete this rule"*
+
+### Drag-and-drop reordering
+- Each row has a drag handle (left column)
+- Dragging shows a 2px colored insertion indicator (`primary.main`) above or below the target row
+- Dropping reorders the array and saves
+
+### Advanced mode (child row)
+When a rule has both `is_regex = true` and `advanced = true`, a single child row appears below the parent row:
+
+- The parent row's bottom border is hidden; the child row shows the bottom border
+- The child row contains a horizontal list of **selections**, each consisting of:
+  - A color picker (`<input type="color">`)
+  - A text field (width 55px) for capture group numbers (e.g. `1,2`)
+  - A delete button (hidden if only one selection remains)
+- A single `+` button at the end of the row adds a new selection
+- The child row starts with a `SubdirectoryArrowRightIcon` (grayed, `text.disabled`) and a left padding of 32px
+- The text field has a tooltip explaining capture groups:
+  > *"Enter the numbers of the capture groups from your regular expression that you want to colorize, separated by commas (e.g. 1,2). In a regex, parentheses define groups numbered left to right starting at 1. For example, with the regex `(\w+): (\d+)`, group 1 matches the word before the colon and group 2 matches the number after it."*
+
+When `advanced = true`, the color picker on the parent row is displayed with `opacity: 0.2` (strongly grayed).
+When `advanced = true`, the "Whole line" checkbox is disabled.
+When `is_regex = false`, the "Advanced" checkbox is disabled.
+
+### Persistence
+On every change, highlights are:
+1. Sent to the Rust backend via `invoke("set_highlights", { highlights: [...] })`
+2. Saved to `highlight_settings.json` in `BaseDirectory.AppConfig`
+
+On mount, highlights are loaded from that file.
+
+### Rule data model (TypeScript)
+
+```typescript
+interface HighligtConfig {
+  id: number;
+  text: string;
+  color: string;           // hex color e.g. "#cc7f12"
+  is_regex: boolean;
+  whole_line: boolean;
+  advanced: boolean;
+  advanced_selections: AdvancedSelection[];
+  focus: boolean;
+  remove: boolean;
+}
+
+interface AdvancedSelection {
+  id: number;
+  color: string;
+  selector: string;        // comma-separated group numbers e.g. "1,2"
+}
+```
+
+Default color for new rules: `#cc7f12`. New rules default to `is_regex: false`, `focus: true`, all others false.
+
+---
+
+## Backend (Rust)
+
+### AppState
+
+```rust
+struct AppState {
+    serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    highlights: Arc<Mutex<Vec<HighlightSettings>>>,
+    message_id_counter: Arc<AtomicU64>,
+}
+```
+
+### Tauri Commands
+
+#### `list_ports() -> Vec<SerialPortEntry>`
+Returns available serial ports. For USB ports, the label is `manufacturer + product`; for others, a generic string. Returns `{ portName, deviceLabel }`.
+
+#### `open_port(port_name, baud_rate)`
+Opens the serial port and spawns a Tokio task that reads byte by byte, assembles lines (splitting on `\r\n`, `\n\r`, `\r`, or `\n`), and processes each line through `parse_log_line`. Non-ASCII bytes are emitted as hex strings (e.g. `0x1f `). Processed lines are emitted as `serial-data` events.
+
+#### `close_port()`
+Drops the serial port connection.
+
+#### `set_highlights(highlights: Vec<HighlightMessage>)`
+Compiles and stores highlight rules. Validates regexes (invalid rules are skipped). Converts the `advanced_selections` field into `AdvancedSelectionSetting` structs (parsing comma-separated group numbers).
+
+#### `add_logs_line(lines: Vec<String>)`
+Processes a batch of raw lines through `parse_log_line` and emits:
+- `serial-datas` — all processed lines
+- `serial-datas-focus` — only lines that matched a focus rule
+
+### Highlight processing pipeline (`parse_log_line`)
+
+Rules are applied in order. For each rule that matches:
+
+1. **`remove = true` + `whole_line = true`**: clear the line, mark `removed_line = true`, stop processing.
+2. **`remove = true` + regex + `advanced`**: remove text at positions of all capture groups from all advanced selections.
+3. **`remove = true` + regex (no advanced)**: remove the matched substring (or specific groups if `custom_select` is set).
+4. **`remove = true` + plain text**: replace matched text with empty string.
+5. **`remove = false` + `whole_line = true`**: wrap entire line in `<span style="color:COLOR">`.
+6. **`remove = false` + regex + `advanced`**: wrap each capture group in its own colored span. Groups are sorted by start position; overlapping groups are skipped (first wins). If no groups are configured, fallback to coloring the whole match.
+7. **`remove = false` + regex (no advanced, custom groups)**: wrap specified capture groups in colored span; if no groups, color the whole match.
+8. **`remove = false` + regex (simple)**: replace match with `<span style="color:COLOR">$0</span>`.
+9. **`remove = false` + plain text**: replace text with `<span style="color:COLOR">text</span>`.
+
+If `focus = true` and `remove = false`, the line is marked `matched = true`.
+
+The `rawline` field is set to the original unprocessed string whenever any rule matched (so the "refresh" feature can reprocess).
+
+### Message payload (emitted to frontend)
+
+```rust
+struct Payload {
+    id: u64,
+    message: String,        // HTML string with <span> tags
+    matched: bool,
+    rawline: Option<String>,
+    removed_line: bool,
+}
+```
+
+### HighlightMessage (received from frontend)
+
+```rust
+struct HighlightMessage {
+    id: u64,
+    text: String,
+    color: String,
+    is_regex: bool,
+    select_mode: HighlightSelectMode,  // "match" | "whole_line" | "custom"
+    custom_select: String,
+    whole_line: bool,
+    advanced_selections: Vec<AdvancedSelectionMessage>,
+    focus: bool,
+    remove: bool,
+}
+
+struct AdvancedSelectionMessage {
+    color: String,
+    custom_select: String,   // comma-separated group numbers
+}
+```
+
+### Payload conversion (frontend → backend)
+
+When `advanced = true` and `is_regex = true`:
+- `select_mode` is set to `"custom"`
+- `advanced_selections` is populated with each selection's `{ color, custom_select: selector }`
+- If `advanced_selections` is empty, a single entry with the parent color and empty selector is used
+
+Otherwise:
+- `select_mode` is `"whole_line"` if `whole_line = true`, else `"match"`
+- `advanced_selections` is omitted
+
+---
+
+## Tauri Events (backend → frontend)
+
+| Event | Payload | Description |
+|---|---|---|
+| `serial-data` | `SerialMessage` | Single line from serial port read loop |
+| `serial-datas` | `SerialMessage[]` | Batch of reprocessed lines |
+| `serial-datas-focus` | `SerialMessage[]` | Batch of focus-matched lines |
+
+---
+
+## File Structure
+
+```
+app/
+  page.tsx                  — Main page, layout, state management
+  globals.css
+  layout.tsx
+  components/
+    SerialTerminal.tsx       — Virtualized log viewer
+    SerialTerminalLine.tsx   — Individual row renderer
+    ControlPanel.tsx         — Tabbed right panel
+    SerialSettings.tsx       — Serial port configuration
+    HighLighSettings.tsx     — Highlight/filter rules table
+    FileSettings.tsx         — File import/export
+  types/
+    SerialMessage.tsx        — SerialMessage type definition
+src-tauri/
+  src/
+    lib.rs                   — All Rust backend logic
+    main.rs                  — Tauri entry point
+  tauri.conf.json
+  Cargo.toml
+```
+
+---
+
+## Key Design Decisions
+
+- **HTML-in-messages**: The Rust backend injects `<span style="color:...">` tags directly into the message string. The frontend renders this via `dangerouslySetInnerHTML`. The raw original line is stored in `rawline` to allow re-processing when rules change.
+- **Virtualized rendering**: `react-window` is used to handle tens of thousands of log lines without DOM performance issues. Row heights are computed per-row (0 for removed lines).
+- **Highlight rule ordering**: Rules are applied sequentially; the first matching `remove=whole_line` rule terminates processing for that line.
+- **Auto-scroll**: Each panel independently tracks whether auto-scroll is enabled. A timestamp-based ref suppresses false negatives when programmatically scrolling.
+- **Persistence**: Highlight rules are saved to JSON on every change and restored on startup. The frontend owns the canonical rule state and pushes it to the backend.
+- **Resizable panels**: Both the horizontal split (left/right) and the vertical split (main/focus) are user-resizable via `re-resizable`.
