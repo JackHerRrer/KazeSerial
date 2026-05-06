@@ -23,6 +23,25 @@ impl Default for HighlightSelectMode {
 }
 
 #[derive(Clone, serde::Deserialize)]
+struct AdvancedSelectionMessage {
+    color: String,
+    custom_select: String,
+}
+
+#[derive(Clone)]
+struct AdvancedSelectionSetting {
+    color: String,
+    custom_groups: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct ColoredSpan {
+    start: usize,
+    end: usize,
+    color: String,
+}
+
+#[derive(Clone, serde::Deserialize)]
 struct HighlightMessage {
     id: u64,
     text: String,
@@ -34,6 +53,8 @@ struct HighlightMessage {
     custom_select: String,
     #[serde(default)]
     whole_line: bool,
+    #[serde(default)]
+    advanced_selections: Vec<AdvancedSelectionMessage>,
     focus: bool,
     remove: bool,
 }
@@ -46,6 +67,7 @@ struct HighlightSettings {
     is_regex: bool,
     select_mode: HighlightSelectMode,
     custom_groups: Vec<usize>,
+    advanced_custom: Vec<AdvancedSelectionSetting>,
     focus: bool,
     remove: bool,
     regex: Option<Regex>,
@@ -173,6 +195,84 @@ fn highlight_custom_regex_match(
     build_highlighted_segment(segment, &spans, color)
 }
 
+fn collect_advanced_colored_spans(
+    captures: &regex::Captures<'_>,
+    advanced_custom: &[AdvancedSelectionSetting],
+) -> Vec<ColoredSpan> {
+    let mut colored_spans: Vec<ColoredSpan> = Vec::new();
+
+    for selection in advanced_custom {
+        let spans = collect_selected_group_spans(captures, &selection.custom_groups);
+        for (start, end) in spans {
+            colored_spans.push(ColoredSpan {
+                start,
+                end,
+                color: selection.color.clone(),
+            });
+        }
+    }
+
+    colored_spans.sort_by_key(|span| (span.start, span.end));
+
+    let mut resolved: Vec<ColoredSpan> = Vec::new();
+    for span in colored_spans {
+        if let Some(last) = resolved.last() {
+            if span.start < last.end {
+                continue;
+            }
+        }
+        resolved.push(span);
+    }
+
+    resolved
+}
+
+fn highlight_advanced_regex_match(
+    captures: &regex::Captures<'_>,
+    advanced_custom: &[AdvancedSelectionSetting],
+    fallback_color: &str,
+) -> String {
+    let Some(whole_match) = captures.get(0) else {
+        return String::new();
+    };
+
+    let segment = whole_match.as_str();
+    let spans = collect_advanced_colored_spans(captures, advanced_custom);
+
+    if spans.is_empty() {
+        return format!("<span style=\"color:{};\">{}</span>", fallback_color, segment);
+    }
+
+    let mut output = String::new();
+    let mut cursor = 0usize;
+
+    for span in spans {
+        output.push_str(&segment[cursor..span.start]);
+        output.push_str(&format!("<span style=\"color:{};\">", span.color));
+        output.push_str(&segment[span.start..span.end]);
+        output.push_str("</span>");
+        cursor = span.end;
+    }
+
+    output.push_str(&segment[cursor..]);
+    output
+}
+
+fn collect_advanced_groups_for_remove(advanced_custom: &[AdvancedSelectionSetting]) -> Vec<usize> {
+    let mut seen = HashSet::new();
+    let mut groups: Vec<usize> = Vec::new();
+
+    for selection in advanced_custom {
+        for group in &selection.custom_groups {
+            if seen.insert(*group) {
+                groups.push(*group);
+            }
+        }
+    }
+
+    groups
+}
+
 fn remove_custom_regex_match(captures: &regex::Captures<'_>, selected_groups: &[usize]) -> String {
     let Some(whole_match) = captures.get(0) else {
         return String::new();
@@ -216,11 +316,20 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
                     if hl.is_regex {
                         if let Some(ref regex) = hl.regex {
                             if hl.select_mode == HighlightSelectMode::Custom {
-                                line = regex
-                                    .replace_all(&line, |captures: &regex::Captures<'_>| {
-                                        remove_custom_regex_match(captures, &hl.custom_groups)
-                                    })
-                                    .to_string();
+                                if hl.advanced_custom.is_empty() {
+                                    line = regex
+                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
+                                            remove_custom_regex_match(captures, &hl.custom_groups)
+                                        })
+                                        .to_string();
+                                } else {
+                                    let groups_for_remove = collect_advanced_groups_for_remove(&hl.advanced_custom);
+                                    line = regex
+                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
+                                            remove_custom_regex_match(captures, &groups_for_remove)
+                                        })
+                                        .to_string();
+                                }
                             } else {
                                 line = regex.replace_all(&line, "").to_string();
                             }
@@ -234,15 +343,27 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
                     } else if hl.is_regex {
                         if let Some(ref regex) = hl.regex {
                             if hl.select_mode == HighlightSelectMode::Custom {
-                                line = regex
-                                    .replace_all(&line, |captures: &regex::Captures<'_>| {
-                                        highlight_custom_regex_match(
-                                            captures,
-                                            &hl.color,
-                                            &hl.custom_groups,
-                                        )
-                                    })
-                                    .to_string();
+                                if hl.advanced_custom.is_empty() {
+                                    line = regex
+                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
+                                            highlight_custom_regex_match(
+                                                captures,
+                                                &hl.color,
+                                                &hl.custom_groups,
+                                            )
+                                        })
+                                        .to_string();
+                                } else {
+                                    line = regex
+                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
+                                            highlight_advanced_regex_match(
+                                                captures,
+                                                &hl.advanced_custom,
+                                                &hl.color,
+                                            )
+                                        })
+                                        .to_string();
+                                }
                             } else {
                                 line = regex
                                     .replace_all(
@@ -341,7 +462,20 @@ async fn set_highlights(
             select_mode = HighlightSelectMode::Match;
         }
 
-        let custom_groups = if elem.is_regex && select_mode == HighlightSelectMode::Custom {
+        let advanced_custom = if elem.is_regex && select_mode == HighlightSelectMode::Custom {
+            elem.advanced_selections
+                .into_iter()
+                .map(|selection| AdvancedSelectionSetting {
+                    color: selection.color,
+                    custom_groups: parse_custom_groups(&selection.custom_select),
+                })
+                .filter(|selection| !selection.custom_groups.is_empty())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        let custom_groups = if elem.is_regex && select_mode == HighlightSelectMode::Custom && advanced_custom.is_empty() {
             parse_custom_groups(&elem.custom_select)
         } else {
             Vec::new()
@@ -354,6 +488,7 @@ async fn set_highlights(
             is_regex: elem.is_regex,
             select_mode,
             custom_groups,
+            advanced_custom,
             focus: if elem.remove { false } else { elem.focus },
             remove: elem.remove,
             regex: cur_regex,
