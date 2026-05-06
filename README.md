@@ -1,5 +1,7 @@
 # Kaze Serial
 
+**A modern serial terminal with advanced, yet easy, highlighting features !**
+
 Kaze Serial is a modern, (should be) high-performance serial terminal application built with **Tauri**, **Next.js**, and **React**. It provides a sleek interface for monitoring serial ports, with advanced features like regex-based highlighting and split-view analysis.
 
 Since I work as an embedded software developper, most of my work time consist of looking on serial monitor for debug purpose.
