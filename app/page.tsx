@@ -75,6 +75,7 @@ export default function Home() {
 
 
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
+  const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
 
   const appendLogs = (count: number) => {
     let newLogs: String[] = generateLogs(count);
@@ -289,11 +290,17 @@ export default function Home() {
             <Box sx={{ height: '100%', overflow: 'hidden' }}>
             {/* Serial vertical Container */}
             <Container disableGutters maxWidth={false} sx={{ py: 0, height: '100%', width:'100%', display:'flex', flexDirection: 'column', pl:0, pr:0, overflow: 'hidden' }}>
-              {/* Main Serial Terminal */}
+              {/* Main Serial Terminal — wrapper takes remaining space when focus closed */}
+              <Box sx={isFocusPanelOpen
+                ? { display: 'contents' }
+                : { flex: 1, minHeight: 0, overflow: 'hidden' }
+              }>
               <Resizable
                 minWidth='100%'
                 maxWidth='100%'
-                maxHeight='90%'
+                maxHeight={isFocusPanelOpen ? '90%' : '100%'}
+                enable={{ bottom: isFocusPanelOpen, top: false, left: false, right: false, topLeft: false, topRight: false, bottomLeft: false, bottomRight: false }}
+                {...(!isFocusPanelOpen && { size: { width: '100%', height: '100%' } })}
                 defaultSize={{
                   width: '100%',
                   height: '70%',
@@ -372,18 +379,47 @@ export default function Home() {
                   />
                 </Box>
               </Resizable>
+              </Box>
               {/* Focus Serial Terminal */}
-              <Typography
-              component="span"
-              sx={{
-                fontFamily: 'monospace',
-                fontSize: '0.875rem',
-                color: '#d4d4d4',
-                lineHeight: 1.2,
-              }}
-            >
-              {"focus"}
-            </Typography>
+              <Box sx={{ position: 'relative', flexShrink: 0 }}>
+                {/* Toggle button straddling top border, horizontally centered */}
+                <IconButton
+                  size="medium"
+                  onClick={() => setIsFocusPanelOpen(v => !v)}
+                  title={isFocusPanelOpen ? 'Collapse focus' : 'Expand focus'}
+                  sx={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: -18,
+                    transform: 'translateX(-50%)',
+                    zIndex: 10,
+                    width: 36,
+                    height: 36,
+                    bgcolor: 'background.paper',
+                    border: '1px solid #444',
+                    borderRadius: '50%',
+                    '&:hover': { bgcolor: 'action.hover' },
+                  }}
+                >
+                  {isFocusPanelOpen ? <LastPageIcon fontSize="medium" sx={{ transform: 'rotate(90deg)' }} /> : <FirstPageIcon fontSize="medium" sx={{ transform: 'rotate(90deg)' }} />}
+                </IconButton>
+                <Typography
+                  component="span"
+                  sx={{
+                    display: 'block',
+                    fontFamily: 'monospace',
+                    fontSize: '0.875rem',
+                    color: '#d4d4d4',
+                    lineHeight: 1.2,
+                    borderTop: '1px solid #333',
+                    pt: 0.5,
+                    pl: 1,
+                  }}
+                >
+                  {"focus"}
+                </Typography>
+              </Box>
+              {isFocusPanelOpen && (
               <Box sx={{ flexGrow: 1, minHeight: '10%', position: 'relative' }}>
                 <Box
                   sx={{
@@ -438,6 +474,7 @@ export default function Home() {
                   onClickRow={onClickFocusLogs}
                 />
               </Box>
+              )}
             </Container>
             </Box>
           </Box>

@@ -28,9 +28,9 @@ The app uses a **dark theme** throughout.
 
 ## Layout
 
-The main window (default 1600×1200, resizable) is divided horizontally into two resizable panes:
+The main window (default 1600×1200, resizable) is divided horizontally into two panes.
 
-### Left pane (default ~70% width)
+### Terminals pane (left, fills all remaining width)
 A vertical flex column containing:
 
 1. **Main Serial Terminal** (top, default ~70% height, vertically resizable)
@@ -39,18 +39,31 @@ A vertical flex column containing:
    - Has a clear button (delete icon, top-right overlay)
    - Has a "refresh/reprocess" button (refresh icon, top-right overlay) that reprocesses all raw lines through current highlight rules
 
-2. **"focus" label** — small monospace label between the two terminals
+2. **"focus" label** — small monospace label with top border, always visible even when the focus panel is collapsed
 
-3. **Focus Serial Terminal** (bottom, fills remaining height)
+3. **Focus Serial Terminal** (bottom, fills remaining height, collapsible)
    - Displays only lines that matched a highlight rule with `focus = true`
    - Has an auto-scroll toggle button
    - Has a clear button
 
-### Right pane (fills remaining width)
-A **Control Panel** with three tabs:
-- **Serial** — serial port configuration
-- **Demo** — demo log generation buttons
-- **File** — log file import/export
+#### Focus panel collapse button
+A circular toggle button (36×36px, MUI `IconButton`) straddles the top border of the focus section (centered horizontally, `position: absolute`, `top: -18px`). It uses:
+- `LastPage` icon rotated 90° when the focus panel is open (points downward = "collapse")
+- `FirstPage` icon rotated 90° when the focus panel is closed (points upward = "expand")
+
+When the focus panel is closed, the Main Terminal wrapper takes `flex: 1` to fill all available space above the "focus" label. When open, the wrapper uses `display: contents` so it is transparent to the flex layout and the Resizable component behaves as a direct child of the Container.
+
+### Settings pane (right, collapsible)
+A **Control Panel** with three tabs (Serial, Demo, File). It is resizable from its **left edge** via `re-resizable` (default width ~30%, min 220px, max 70%) and can be collapsed to a thin strip.
+
+#### Settings panel collapse button
+A circular toggle button (36×36px) is positioned absolutely on the **right border** of the terminals pane (`right: -18px`, `top: 50%`), straddling the boundary between the two panes. It uses:
+- `LastPage` icon when the settings panel is open (points right = "collapse")
+- `FirstPage` icon when the settings panel is closed (points left = "expand")
+
+When the settings panel is closed, a thin strip with a vertical "Settings" label (one character per line) replaces the full panel. Clicking the strip or the button reopens the panel.
+
+The terminals pane uses `position: relative` on its outer Box with `overflow: hidden` on an inner Box, so the toggle button (which overflows at `right: -18px`) is not clipped by the terminal content.
 
 ---
 
@@ -344,7 +357,7 @@ src-tauri/
 - **Highlight rule ordering**: Rules are applied sequentially; the first matching `remove=whole_line` rule terminates processing for that line.
 - **Auto-scroll**: Each panel independently tracks whether auto-scroll is enabled. A timestamp-based ref suppresses false negatives when programmatically scrolling.
 - **Persistence**: Highlight rules are saved to JSON on every change and restored on startup. The frontend owns the canonical rule state and pushes it to the backend.
-- **Resizable panels**: Both the horizontal split (left/right) and the vertical split (main/focus) are user-resizable via `re-resizable`.
+- **Resizable panels**: The vertical split (main/focus) is user-resizable via `re-resizable`. The horizontal split is achieved by making the terminals pane `flex: 1` and the settings pane a `re-resizable` component that resizes from its left edge. This avoids the issue where `re-resizable` injects `width` as an inline style, which would override any CSS flex behavior if the resizable element itself were the flex child.
 
 ---
 
