@@ -14,8 +14,11 @@ import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import SaveIcon from '@mui/icons-material/Save';
 import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
@@ -351,6 +354,30 @@ export default function Home() {
                       }}
                     >
                       <RefreshIcon fontSize="medium" />
+                    </IconButton>
+                    <IconButton
+                      aria-label="save logs to file"
+                      size="medium"
+                      color="inherit"
+                      onClick={async () => {
+                        let buf = '';
+                        for (const msg of logs) {
+                          buf += (msg.rawline ?? msg.message) + '\n';
+                        }
+                        const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
+                        if (filePath) await writeTextFile(filePath, buf);
+                      }}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <SaveIcon fontSize="medium" />
                     </IconButton>
                   <IconButton
                     aria-label="clear logs"
