@@ -16,8 +16,11 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
 import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
@@ -80,6 +83,7 @@ export default function Home() {
 
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
   const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
+  const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(null);
 
   const appendLogs = (count: number) => {
     let newLogs: String[] = generateLogs(count);
@@ -421,6 +425,31 @@ export default function Home() {
                   >
                     <DeleteOutlineIcon fontSize="medium" />
                   </IconButton>
+                    <IconButton
+                      aria-label="more options"
+                      size="medium"
+                      color="inherit"
+                      onClick={(e) => setMainMenuAnchor(e.currentTarget)}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': { bgcolor: 'rgba(30, 30, 30, 0.95)' },
+                      }}
+                    >
+                      <MoreVertIcon fontSize="medium" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={mainMenuAnchor}
+                      open={Boolean(mainMenuAnchor)}
+                      onClose={() => setMainMenuAnchor(null)}
+                      anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                      transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                    >
+                      <MenuItem onClick={() => { appendLogs(10000); setMainMenuAnchor(null); }}>Demo - Append 10k logs</MenuItem>
+                      <MenuItem onClick={() => { regenerateLogs(); setMainMenuAnchor(null); }}>Demo - Regenerate logs</MenuItem>
+                    </Menu>
                   </Box>
                   <SerialTerminal
                     serial_messages={logs}

@@ -35,16 +35,24 @@ A vertical flex column containing:
 
 1. **Main Serial Terminal** (top, default ~70% height, vertically resizable)
    - Displays all incoming log lines
-   - Has an auto-scroll toggle button (arrow-down icon, top-right overlay)
-   - Has a clear button (delete icon, top-right overlay)
-   - Has a "refresh/reprocess" button (refresh icon, top-right overlay) that reprocesses all raw lines through current highlight rules
+   - Toolbar (top-right overlay, left to right):
+     - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
+     - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
+     - **Open** (folder icon) — opens a file picker, loads a log file into the main terminal
+     - **Save** (save icon) — saves the main log to a `.log` file
+     - **Delete** (delete icon) — clears the main log
+     - **More** (three-dot icon, rightmost) — dropdown menu with demo utilities:
+       - *Demo - Append 10k logs*
+       - *Demo - Regenerate logs*
 
 2. **"focus" label** — small monospace label with top border, always visible even when the focus panel is collapsed
 
 3. **Focus Serial Terminal** (bottom, fills remaining height, collapsible)
    - Displays only lines that matched a highlight rule with `focus = true`
-   - Has an auto-scroll toggle button
-   - Has a clear button
+   - Toolbar (top-right overlay, left to right):
+     - **Auto-scroll toggle** (arrow-down icon)
+     - **Save** (save icon) — saves the focus log to a `.log` file
+     - **Delete** (delete icon) — clears the focus log
 
 #### Focus panel collapse button
 A circular toggle button (36×36px, MUI `IconButton`) straddles the top border of the focus section (centered horizontally, `position: absolute`, `top: -18px`). It uses:
@@ -54,7 +62,7 @@ A circular toggle button (36×36px, MUI `IconButton`) straddles the top border o
 When the focus panel is closed, the Main Terminal wrapper takes `flex: 1` to fill all available space above the "focus" label. When open, the wrapper uses `display: contents` so it is transparent to the flex layout and the Resizable component behaves as a direct child of the Container.
 
 ### Settings pane (right, collapsible)
-A **Control Panel** with three tabs (Serial, Demo, File). It is resizable from its **left edge** via `re-resizable` (default width ~30%, min 220px, max 70%) and can be collapsed to a thin strip.
+A **Control Panel** showing serial port configuration at the top and the highlight rules table below. It is resizable from its **left edge** via `re-resizable` (default width ~30%, min 220px, max 70%) and can be collapsed to a thin strip.
 
 #### Settings panel collapse button
 A circular toggle button (36×36px) is positioned absolutely on the **right border** of the terminals pane (`right: -18px`, `top: 50%`), straddling the boundary between the two panes. It uses:
@@ -109,25 +117,16 @@ type SerialMessage = {
 
 ## Control Panel
 
-A tabbed panel on the right side.
+A panel on the right side with two sections (no tabs):
 
-### Tab: Serial
+### Serial configuration (top)
 Serial port configuration:
 - **Port selector** — dropdown listing available ports with auto-detection on mount. Each entry shows `portName - deviceLabel` (manufacturer + product name for USB, or generic label). A refresh button re-lists ports.
 - **Baud rate selector** — dropdown with values: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600. Default: 115200.
 - **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly.
 
-### Tab: Demo
-Buttons for development/testing:
-- **Append 10 Logs** — generates and processes 10000 fake UART log lines
-- **Regenerate Logs** — resets timer and generates 10 fake lines
-
-Fake log format: `[timestamp] TYPE: message` where TYPE is one of ERROR/WARN/INFO/DEBUG.
-
-### Tab: File
-- **Save logs to file** — opens a save dialog (`.log` extension), writes raw lines
-- **Save focus logs to file** — same for focus logs
-- **Load log files** — opens a file picker, reads content and sends lines to backend via `add_logs_line`
+### Highlight rules (bottom, scrollable)
+The `HighLighSettings` table occupies the remaining height of the panel with vertical scrolling.
 
 ---
 
@@ -358,10 +357,9 @@ app/
   components/
     SerialTerminal.tsx       — Virtualized log viewer
     SerialTerminalLine.tsx   — Individual row renderer
-    ControlPanel.tsx         — Tabbed right panel
+    ControlPanel.tsx         — Serial config + highlight rules panel
     SerialSettings.tsx       — Serial port configuration
     HighLighSettings.tsx     — Highlight/filter rules table
-    FileSettings.tsx         — File import/export
   types/
     SerialMessage.tsx        — SerialMessage type definition
 src-tauri/
