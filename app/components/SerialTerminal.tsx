@@ -36,8 +36,34 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
     onClickRow?.(message_id);
   };
 
+  const handleCopy = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    const rows = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('.serial-terminal-row'));
+    const lines: string[] = [];
+    for (const row of rows) {
+      if (!range.intersectsNode(row)) continue;
+      const rowRange = document.createRange();
+      rowRange.selectNodeContents(row);
+      const intersect = range.cloneRange();
+      if (intersect.compareBoundaryPoints(Range.START_TO_START, rowRange) < 0) {
+        intersect.setStart(rowRange.startContainer, rowRange.startOffset);
+      }
+      if (intersect.compareBoundaryPoints(Range.END_TO_END, rowRange) > 0) {
+        intersect.setEnd(rowRange.endContainer, rowRange.endOffset);
+      }
+      lines.push(intersect.toString());
+    }
+    if (lines.length > 1) {
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', lines.join('\n'));
+    }
+  };
+
   return (
     <Box
+      onCopy={handleCopy}
       sx={{
         height: height,
         width: width,

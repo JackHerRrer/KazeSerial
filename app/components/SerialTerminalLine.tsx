@@ -19,6 +19,7 @@ export default function RowComponent({
   const isSelected = selectedLineId === line.id;
   return (
     <div
+      className="serial-terminal-row"
       style={{ ...style, whiteSpace: 'pre', backgroundColor: isSelected ? 'rgba(255,255,255,0.12)' : undefined, cursor: 'pointer' }}
       onClick={onClickRow ? (e) => {
         if (window.getSelection()?.toString()) return;
