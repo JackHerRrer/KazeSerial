@@ -15,9 +15,12 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
+import SaveIcon from '@mui/icons-material/Save';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import { invoke } from "@tauri-apps/api/core";
 
 import { writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 
 
 type HighlightSelectMode = 'match' | 'whole_line' | 'custom';
@@ -501,6 +504,60 @@ const HighLighSettings: React.FC = () => {
 
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0, width: '100%' }}>
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-start', position: 'relative', zIndex: 1, mb: '-42px' }}>
+                <IconButton
+                    size="medium"
+                    title="Load highlight rules from file"
+                    onClick={async () => {
+                        const filePath = await openDialog({ directory: false, multiple: false, filters: [{ name: 'Highlights', extensions: ['json'] }] }).catch(() => undefined);
+                        if (!filePath) return;
+                        try {
+                            const result = await readTextFile(filePath);
+                            const parsed = JSON.parse(result) as PersistedHighlightConfig[];
+                            const tmpArr: HighligtConfig[] = parsed.map((h, index) => {
+                                const isRegex = h.is_regex ?? true;
+                                const color = h.color ?? DEFAULT_HIGHLIGHT_COLOR;
+                                const selectMode = normalizeSelectMode(isRegex, getSelectModeFromPersisted(h));
+                                const explicitAdvanced = typeof h.advanced === 'boolean' ? h.advanced : selectMode === 'custom';
+                                const advancedEnabled = explicitAdvanced && isRegex;
+                                const persistedAdv = (h.advanced_selections ?? []).map((s, si) => ({
+                                    id: s.id ?? Date.now() + index + si,
+                                    color: s.color ?? color,
+                                    selector: s.selector ?? s.custom_select ?? '',
+                                }));
+                                return {
+                                    id: h.id ?? Date.now() + index,
+                                    text: h.text ?? '',
+                                    color,
+                                    is_regex: isRegex,
+                                    whole_line: advancedEnabled ? false : (h.whole_line ?? selectMode === 'whole_line'),
+                                    advanced: advancedEnabled,
+                                    advanced_selections: advancedEnabled ? (persistedAdv.length > 0 ? persistedAdv : [createAdvancedSelection(color, h.custom_select ?? '')]) : [],
+                                    focus: h.remove ? false : (h.focus ?? true),
+                                    remove: h.remove ?? false,
+                                };
+                            });
+                            setHighlights(tmpArr);
+                        } catch (e) {
+                            console.error('Failed to load highlights:', e);
+                        }
+                    }}
+                    sx={{ width: 36, height: 36, border: '1px solid #444' }}
+                >
+                    <FolderOpenIcon fontSize="medium" />
+                </IconButton>
+                <IconButton
+                    size="medium"
+                    title="Save highlight rules to file"
+                    onClick={async () => {
+                        const filePath = await saveDialog({ filters: [{ name: 'Highlights', extensions: ['json'] }] }).catch(() => undefined);
+                        if (filePath && highlights) await writeTextFile(filePath, JSON.stringify(highlights, null, 2));
+                    }}
+                    sx={{ width: 36, height: 36, border: '1px solid #444' }}
+                >
+                    <SaveIcon fontSize="medium" />
+                </IconButton>
+            </Box>
             <Box sx={{ overflowX: 'auto', overflowY: 'visible', width: '100%' }}>
                 <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH }}>
                     <TableHead sx={{ overflow: 'visible' }}>
@@ -524,7 +581,7 @@ const HighLighSettings: React.FC = () => {
                                             minWidth: optionColumn.width,
                                             maxWidth: optionColumn.width,
                                             p: 0,
-                                            height: '58px',
+                                            height: '80px',
                                             overflow: 'visible',
                                             verticalAlign: 'bottom',
                                         }}
