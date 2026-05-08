@@ -119,6 +119,11 @@ const createAdvancedSelection = (
     selector,
 });
 
+const isInvalidRegex = (text: string, isRegex: boolean): boolean => {
+    if (!isRegex || text.length === 0) return false;
+    try { new RegExp(text); return false; } catch { return true; }
+};
+
 const createDefaultHighlight = (): HighligtConfig => ({
     id: Date.now() + Math.floor(Math.random() * 1000000),
     text: '',
@@ -668,6 +673,7 @@ const HighLighSettings: React.FC = () => {
                                             value={filter.text}
                                             onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
                                             fullWidth
+                                            error={isInvalidRegex(filter.text, filter.is_regex)}
                                         />
                                     </TableCell>
                                     <TableCell
