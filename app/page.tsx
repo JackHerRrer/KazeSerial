@@ -477,6 +477,30 @@ export default function Home() {
                     <KeyboardArrowDownIcon fontSize="medium" />
                   </IconButton>
                   <IconButton
+                    aria-label="save focus logs to file"
+                    size="medium"
+                    color="inherit"
+                    onClick={async () => {
+                      let buf = '';
+                      for (const msg of focusLogs) {
+                        buf += (msg.rawline ?? msg.message) + '\n';
+                      }
+                      const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
+                      if (filePath) await writeTextFile(filePath, buf);
+                    }}
+                    sx={{
+                      width: 36,
+                      height: 36,
+                      border: '1px solid #333',
+                      bgcolor: 'rgba(30, 30, 30, 0.75)',
+                      '&:hover': {
+                        bgcolor: 'rgba(30, 30, 30, 0.95)',
+                      },
+                    }}
+                  >
+                    <SaveIcon fontSize="medium" />
+                  </IconButton>
+                  <IconButton
                     aria-label="clear focus logs"
                     size="medium"
                     color="inherit"
