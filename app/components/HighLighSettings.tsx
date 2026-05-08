@@ -571,7 +571,7 @@ const HighLighSettings: React.FC = () => {
                                     borderBottom: 'none',
                                 }}
                             />
-                            <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>Sentence</TableCell>
+                            <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>Search</TableCell>
                             {OPTION_COLUMNS.map((optionColumn) => {
                                 return (
                                     <TableCell
@@ -675,7 +675,7 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: COLOR_COLUMN_WIDTH, minWidth: COLOR_COLUMN_WIDTH, maxWidth: COLOR_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Tooltip title="Highlight color applied to matching text" placement="top" arrow>
+                                            <Tooltip title="Color: Highlight color applied to matching text" placement="top" arrow>
                                                 <span>
                                                     <input
                                                         type="color"
@@ -701,7 +701,7 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: REGEX_COLUMN_WIDTH, minWidth: REGEX_COLUMN_WIDTH, maxWidth: REGEX_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Tooltip title="Treat the sentence as a regular expression (regexp)" placement="top" arrow>
+                                            <Tooltip title="Regexp: Treat the search as a regular expression" placement="top" arrow>
                                                 <Checkbox
                                                     size="small"
                                                     checked={filter.is_regex}
@@ -715,7 +715,7 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: FOCUS_COLUMN_WIDTH, minWidth: FOCUS_COLUMN_WIDTH, maxWidth: FOCUS_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Tooltip title="Display the whole line in the focus panel" placement="top" arrow>
+                                            <Tooltip title="Focus: Display the whole line in the focus panel" placement="top" arrow>
                                                 <span>
                                                     <Checkbox
                                                         size="small"
@@ -732,7 +732,7 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: REMOVE_COLUMN_WIDTH, minWidth: REMOVE_COLUMN_WIDTH, maxWidth: REMOVE_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Tooltip title="Remove the text instead of highlighting it" placement="top" arrow>
+                                            <Tooltip title="Remove: Remove the text instead of highlighting it" placement="top" arrow>
                                                 <Checkbox
                                                     size="small"
                                                     checked={filter.remove}
@@ -746,7 +746,7 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: WHOLE_LINE_COLUMN_WIDTH, minWidth: WHOLE_LINE_COLUMN_WIDTH, maxWidth: WHOLE_LINE_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Tooltip title="Highlight or remove the entire line instead of just the matched text" placement="top" arrow>
+                                            <Tooltip title="Whole line: Highlight or remove the entire line instead of just the matched text" placement="top" arrow>
                                                 <span>
                                                     <Checkbox
                                                         size="small"
@@ -763,7 +763,7 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: ADVANCED_COLUMN_WIDTH, minWidth: ADVANCED_COLUMN_WIDTH, maxWidth: ADVANCED_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Tooltip title="Enable advanced mode to colorize individual regex capture groups with different colors (requires regex)" placement="top" arrow>
+                                            <Tooltip title="Advanced: Enable advanced mode to colorize individual regex capture groups with different colors (requires regex)" placement="top" arrow>
                                                 <span>
                                                     <Checkbox
                                                         size="small"

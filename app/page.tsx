@@ -21,6 +21,7 @@ import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
+import Tooltip from '@mui/material/Tooltip';
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
@@ -325,6 +326,7 @@ export default function Home() {
                       gap: 1,
                     }}
                   >
+                    <Tooltip title="Auto-scroll" placement="top" arrow>
                     <IconButton
                       aria-label="toggle auto-scroll"
                       aria-pressed={isMainAutoScrollEnabled}
@@ -343,6 +345,8 @@ export default function Home() {
                     >
                       <KeyboardArrowDownIcon fontSize="medium" />
                     </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Apply current highlight rules to all logs (Usefull when rules have changed)" placement="top" arrow>
                     <IconButton
                       aria-label="refresh logs"
                       size="medium"
@@ -360,6 +364,8 @@ export default function Home() {
                     >
                       <RefreshIcon fontSize="medium" />
                     </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Load log file" placement="top" arrow>
                     <IconButton
                       aria-label="load log file"
                       size="medium"
@@ -384,6 +390,8 @@ export default function Home() {
                     >
                       <FolderOpenIcon fontSize="medium" />
                     </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Save logs to file" placement="top" arrow>
                     <IconButton
                       aria-label="save logs to file"
                       size="medium"
@@ -408,6 +416,8 @@ export default function Home() {
                     >
                       <SaveIcon fontSize="medium" />
                     </IconButton>
+                    </Tooltip>
+                  <Tooltip title="Clear logs" placement="top" arrow>
                   <IconButton
                     aria-label="clear logs"
                     size="medium"
@@ -425,6 +435,8 @@ export default function Home() {
                   >
                     <DeleteOutlineIcon fontSize="medium" />
                   </IconButton>
+                  </Tooltip>
+                    <Tooltip title="More options" placement="top" arrow>
                     <IconButton
                       aria-label="more options"
                       size="medium"
@@ -440,6 +452,7 @@ export default function Home() {
                     >
                       <MoreVertIcon fontSize="medium" />
                     </IconButton>
+                    </Tooltip>
                     <Menu
                       anchorEl={mainMenuAnchor}
                       open={Boolean(mainMenuAnchor)}
@@ -512,6 +525,7 @@ export default function Home() {
                     gap: 1,
                   }}
                 >
+                  <Tooltip title="Auto-scroll" placement="top" arrow>
                   <IconButton
                     aria-label="toggle focus auto-scroll"
                     aria-pressed={isFocusAutoScrollEnabled}
@@ -530,6 +544,8 @@ export default function Home() {
                   >
                     <KeyboardArrowDownIcon fontSize="medium" />
                   </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Save focus logs to file" placement="top" arrow>
                   <IconButton
                     aria-label="save focus logs to file"
                     size="medium"
@@ -554,6 +570,8 @@ export default function Home() {
                   >
                     <SaveIcon fontSize="medium" />
                   </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Clear focus logs" placement="top" arrow>
                   <IconButton
                     aria-label="clear focus logs"
                     size="medium"
@@ -571,6 +589,7 @@ export default function Home() {
                   >
                     <DeleteOutlineIcon fontSize="medium" />
                   </IconButton>
+                  </Tooltip>
                 </Box>
                 <SerialTerminal
                   serial_messages={focusLogs}
