@@ -15,10 +15,11 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
@@ -354,6 +355,30 @@ export default function Home() {
                       }}
                     >
                       <RefreshIcon fontSize="medium" />
+                    </IconButton>
+                    <IconButton
+                      aria-label="load log file"
+                      size="medium"
+                      color="inherit"
+                      onClick={async () => {
+                        const selected = await openDialog({ directory: false, multiple: false }).catch(() => undefined);
+                        if (selected) {
+                          const contents = await readTextFile(selected);
+                          const lines = contents.split('\n').filter(l => l.length > 0);
+                          invoke<void>('add_logs_line', { lines }).catch((err: unknown) => console.error(err));
+                        }
+                      }}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <FolderOpenIcon fontSize="medium" />
                     </IconButton>
                     <IconButton
                       aria-label="save logs to file"
