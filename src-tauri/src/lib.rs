@@ -82,6 +82,35 @@ struct Payload {
     removed_line: bool,
 }
 
+fn make_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{:02}:{:02}:{:02}", h, m, s)
+}
+
+fn emit_system_msg(app: &tauri::AppHandle, msg: String) {
+    let message_id = app
+        .state::<AppState>()
+        .message_id_counter
+        .fetch_add(1, Ordering::SeqCst);
+    let _ = app.emit(
+        "serial-data",
+        Payload {
+            id: message_id,
+            message: format!("[{}] KazeSerial: {}", make_timestamp(), msg),
+            matched: false,
+            rawline: None,
+            removed_line: false,
+        },
+    );
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SerialPortEntry {
@@ -567,13 +596,20 @@ async fn open_port(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     port_name: String,
+    port_description: Option<String>,
     baud_rate: u32,
 ) -> Result<(), String> {
-    match serialport::new(port_name, baud_rate).open() {
+    match serialport::new(&port_name, baud_rate).open() {
         Ok(port) => {
             *state.serial_connection.lock().await = Some(port);
+            let desc = port_description.unwrap_or_default();
+            emit_system_msg(
+                &app,
+                format!("Connection to {} ({}) established", port_name, desc),
+            );
             let serial = state.serial_connection.clone();
             let app_handle = app.clone();
+            let port_name_loop = port_name.clone();
             tokio::spawn(async move {
                 let mut line_buffer: Vec<u8> = Vec::new();
                 //let regex_eol = regex::Regex::new(r"\r\n|\n\r|\r|\n").unwrap();
@@ -631,7 +667,11 @@ async fn open_port(
                                 std::thread::sleep(std::time::Duration::from_millis(2));
                             }
                             Err(_) => {
-                                std::thread::sleep(std::time::Duration::from_millis(2));
+                                emit_system_msg(
+                                    &app_handle,
+                                    format!("Connection to {} lost", port_name_loop),
+                                );
+                                break;
                             }
                         }
                     } else {
@@ -641,13 +681,17 @@ async fn open_port(
             });
             Ok(())
         }
-        Err(e) => Err(format!("Failed to open port: {}", e)),
+        Err(e) => {
+            emit_system_msg(&app, format!("Connection failed: {}", e));
+            Err(format!("Failed to open port: {}", e))
+        }
     }
 }
 
 #[tauri::command]
-async fn close_port(state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     *state.serial_connection.lock().await = None;
+    emit_system_msg(&app, "Connection closed".to_string());
     Ok(())
 }
 fn create_config_dir(app: &mut tauri::App) {

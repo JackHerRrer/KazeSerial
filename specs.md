@@ -235,11 +235,17 @@ struct AppState {
 #### `list_ports() -> Vec<SerialPortEntry>`
 Returns available serial ports. For USB ports, the label is `manufacturer + product`; for others, a generic string. Returns `{ portName, deviceLabel }`.
 
-#### `open_port(port_name, baud_rate)`
+#### `open_port(port_name, port_description?, baud_rate)`
 Opens the serial port and spawns a Tokio task that reads byte by byte, assembles lines (splitting on `\r\n`, `\n\r`, `\r`, or `\n`), and processes each line through `parse_log_line`. Non-ASCII bytes are emitted as hex strings (e.g. `0x1f `). Processed lines are emitted as `serial-data` events.
 
+On success, emits a system message: `[HH:MM:SS] KazeSerial: Connection to {port} ({description}) established`.
+On failure, emits a system message: `[HH:MM:SS] KazeSerial: Connection failed: {error}` and returns an error.
+If the read loop encounters a non-timeout I/O error (device disconnected), emits: `[HH:MM:SS] KazeSerial: Connection to {port} lost` and exits the loop.
+
+`port_description` is optional — if omitted, the description part is empty.
+
 #### `close_port()`
-Drops the serial port connection.
+Drops the serial port connection. Emits a system message: `[HH:MM:SS] KazeSerial: Connection closed`.
 
 #### `set_highlights(highlights: Vec<HighlightMessage>)`
 Compiles and stores highlight rules. Validates regexes (invalid rules are skipped). Converts the `advanced_selections` field into `AdvancedSelectionSetting` structs (parsing comma-separated group numbers).
@@ -312,15 +318,32 @@ Otherwise:
 - `select_mode` is `"whole_line"` if `whole_line = true`, else `"match"`
 - `advanced_selections` is omitted
 
+### System Messages
+
+Certain backend events (connection lifecycle) are surfaced as regular log lines in the main terminal, rendered in the same monospace font as serial data. They are not processed through highlight rules and always have `matched: false` and `removed_line: false`.
+
+Format: `[HH:MM:SS] KazeSerial: {message}` where the timestamp is UTC wall-clock time.
+
+| Trigger | Message |
+|---|---|
+| Port opened successfully | `Connection to {port} ({description}) established` |
+| Port open failed | `Connection failed: {error}` |
+| Read loop I/O error | `Connection to {port} lost` |
+| Port closed by user | `Connection closed` |
+
+Implemented via `emit_system_msg(app, msg)` which allocates a message ID from the shared counter and emits a `serial-data` event.
+
 ---
 
 ## Tauri Events (backend → frontend)
 
 | Event | Payload | Description |
 |---|---|---|
-| `serial-data` | `SerialMessage` | Single line from serial port read loop |
-| `serial-datas` | `SerialMessage[]` | Batch of reprocessed lines |
-| `serial-datas-focus` | `SerialMessage[]` | Batch of focus-matched lines |
+| `serial-data` | `SerialMessage` | Single line from serial port read loop, or a system message |
+| `serial-datas` | `SerialMessage[]` | Batch of reprocessed lines (replaces full log) |
+| `serial-datas-focus` | `SerialMessage[]` | Batch of focus-matched lines (replaces full focus log) |
+| `serial-datas-append` | `SerialMessage[]` | Batch of new lines to append to the log |
+| `serial-datas-focus-append` | `SerialMessage[]` | Batch of new focus-matched lines to append |
 
 ---
 

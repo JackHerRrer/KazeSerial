@@ -41,26 +41,24 @@ const SerialSettings: React.FC = () => {
     setBaudRate(event.target.value as number);
   };
   const handleConnect = () => {
-    //console.log("connect to", port, "at", baudRate);
     if(isConnected == false)
     {
-        invoke<string[]>("open_port", { portName: port, baudRate: baudRate })
-            .then((s) => {
-                console.log("port opened:", s);
-            }).catch((err: unknown) => {
-                console.error(err);
+        const selectedPortEntry = ports.find(p => p.portName === port);
+        const portDescription = selectedPortEntry?.deviceLabel ?? '';
+        invoke<void>("open_port", { portName: port, portDescription, baudRate: baudRate })
+            .then(() => {
+                setIsConnected(true);
+            }).catch(() => {
+                // error already displayed in the log via serial-data event
             });
     }else{
         invoke<void>("close_port")
             .then(() => {
-                console.log("port closed");
+                setIsConnected(false);
             }).catch((err: unknown) => {
                 console.error(err);
             });
     }
-
-    isConnected ? setIsConnected(false) : setIsConnected(true);
-
   };
   const listUart = () => {
     invoke<SerialPortEntry[]>("list_ports")
