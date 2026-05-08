@@ -671,6 +671,7 @@ async fn open_port(
                                     &app_handle,
                                     format!("Connection to {} lost", port_name_loop),
                                 );
+                                let _ = app_handle.emit("serial-disconnected", ());
                                 break;
                             }
                         }

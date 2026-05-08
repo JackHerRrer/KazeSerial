@@ -9,6 +9,7 @@ import InputLabel from '@mui/material/InputLabel';
 import Select, { SelectChangeEvent } from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 type SerialPortEntry = {
@@ -28,8 +29,12 @@ const SerialSettings: React.FC = () => {
     {
         listUart();
     }
+    const unlisten = listen('serial-disconnected', () => {
+      setIsConnected(false);
+    });
     return () => {
       isCancelled.current = true;
+      unlisten.then(fn => fn());
     };
   }, []);
 

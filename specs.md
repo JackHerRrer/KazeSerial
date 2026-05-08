@@ -115,7 +115,7 @@ A tabbed panel on the right side.
 Serial port configuration:
 - **Port selector** — dropdown listing available ports with auto-detection on mount. Each entry shows `portName - deviceLabel` (manufacturer + product name for USB, or generic label). A refresh button re-lists ports.
 - **Baud rate selector** — dropdown with values: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600. Default: 115200.
-- **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command.
+- **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly.
 
 ### Tab: Demo
 Buttons for development/testing:
@@ -344,6 +344,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 | `serial-datas-focus` | `SerialMessage[]` | Batch of focus-matched lines (replaces full focus log) |
 | `serial-datas-append` | `SerialMessage[]` | Batch of new lines to append to the log |
 | `serial-datas-focus-append` | `SerialMessage[]` | Batch of new focus-matched lines to append |
+| `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged). The frontend listens to this event to reset the Connect button to its disconnected state. |
 
 ---
 
