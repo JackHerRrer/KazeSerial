@@ -568,8 +568,6 @@ export default function Home() {
                 <ControlPanel
                   onAppendLogs={() => appendLogs(10000)}
                   onRegenerateLogs={regenerateLogs}
-                  logs={logs}
-                  focusLogs={focusLogs}
                 />
               </Box>
             </Resizable>

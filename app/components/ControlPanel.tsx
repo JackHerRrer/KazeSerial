@@ -7,8 +7,6 @@ import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import SerialSettings from './SerialSettings';
 import HighLighSettings from './HighLighSettings';
-import FileSettings from './FileSettings';
-import { SerialMessage } from '../types/SerialMessage';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -46,15 +44,11 @@ function a11yProps(index: number) {
 interface ControlPanelProps {
   onAppendLogs: () => void;
   onRegenerateLogs: () => void;
-  logs: SerialMessage[];
-  focusLogs: SerialMessage[];
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
   onAppendLogs,
   onRegenerateLogs,
-  logs,
-  focusLogs
 }) => {
   const [tabValue, setTabValue] = useState(0);
 
@@ -68,7 +62,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         <Tabs value={tabValue} onChange={handleChange} aria-label="control panel tabs">
           <Tab label="Serial" {...a11yProps(0)} />
           <Tab label="Demo" {...a11yProps(1)} />
-          <Tab label="File" {...a11yProps(2)} />
         </Tabs>
       </Box>
       <TabPanel value={tabValue} index={0}>
@@ -85,9 +78,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </Box>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={2}>
-        <FileSettings logs={logs} focusLogs={focusLogs} />
-      </TabPanel>
       <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>
         <HighLighSettings />
       </Box>
