@@ -100,21 +100,14 @@ fn make_timestamp() -> String {
 
 /// Emits a KazeSerial system message as a regular `serial-data` event.
 /// These appear in the log with format `[HH:MM:SS] KazeSerial: {msg}`.
-fn emit_system_msg(app: &tauri::AppHandle, msg: String) {
-    let message_id = app
-        .state::<AppState>()
-        .message_id_counter
-        .fetch_add(1, Ordering::SeqCst);
-    let _ = app.emit(
-        "serial-data",
-        Payload {
-            id: message_id,
-            message: format!("[{}] KazeSerial: {}", make_timestamp(), msg),
-            matched: false,
-            rawline: None,
-            removed_line: false,
-        },
-    );
+/// The message is processed through the current highlight rules like any other line.
+async fn emit_system_msg(app: &tauri::AppHandle, msg: String) {
+    let raw = format!("[{}] KazeSerial: {}", make_timestamp(), msg);
+    let state = app.state::<AppState>();
+    let message_id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
+    let highlights = state.highlights.lock().await.clone();
+    let payload = process_line(raw, &highlights, message_id);
+    let _ = app.emit("serial-data", payload);
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -665,7 +658,7 @@ async fn open_port(
             emit_system_msg(
                 &app,
                 format!("Connection to {} ({}) established", port_name, desc),
-            );
+            ).await;
             let serial = state.serial_connection.clone();
             let app_handle = app.clone();
             let port_name_loop = port_name.clone();
@@ -729,7 +722,7 @@ async fn open_port(
                                 emit_system_msg(
                                     &app_handle,
                                     format!("Connection to {} lost", port_name_loop),
-                                );
+                                ).await;
                                 let _ = app_handle.emit("serial-disconnected", ());
                                 break;
                             }
@@ -742,7 +735,7 @@ async fn open_port(
             Ok(())
         }
         Err(e) => {
-            emit_system_msg(&app, format!("Connection failed: {}", e));
+            emit_system_msg(&app, format!("Connection failed: {}", e)).await;
             Err(format!("Failed to open port: {}", e))
         }
     }
@@ -751,7 +744,7 @@ async fn open_port(
 #[tauri::command]
 async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     *state.serial_connection.lock().await = None;
-    emit_system_msg(&app, "Connection closed".to_string());
+    emit_system_msg(&app, "Connection closed".to_string()).await;
     Ok(())
 }
 fn create_config_dir(app: &mut tauri::App) {
