@@ -36,6 +36,7 @@ interface HighligtConfig {
   text: string;
   color: string;
   is_regex: boolean;
+  case_sensitive: boolean;
     whole_line: boolean;
     advanced: boolean;
     advanced_selections: AdvancedSelection[];
@@ -55,6 +56,7 @@ interface PersistedHighlightConfig {
     text?: string;
     color?: string;
     is_regex?: boolean;
+    case_sensitive?: boolean;
     whole_line?: boolean;
     advanced?: boolean;
     advanced_selections?: PersistedAdvancedSelection[];
@@ -69,6 +71,7 @@ interface HighlightMessagePayload {
     text: string;
     color: string;
     is_regex: boolean;
+    case_sensitive: boolean;
     select_mode: HighlightSelectMode;
     custom_select: string;
     whole_line: boolean;
@@ -82,6 +85,7 @@ interface HighlightMessagePayload {
 
 const DEFAULT_HIGHLIGHT_COLOR = '#cc7f12';
 const COLOR_COLUMN_WIDTH = 36;
+const CASE_SENSITIVE_COLUMN_WIDTH = 36;
 const REGEX_COLUMN_WIDTH = 36;
 const FOCUS_COLUMN_WIDTH = 36;
 const REMOVE_COLUMN_WIDTH = 36;
@@ -91,6 +95,7 @@ const DRAG_COLUMN_WIDTH = 28;
 const SENTENCE_MIN_COLUMN_WIDTH = 180;
 const OPTION_COLUMNS = [
         { label: 'Color', width: COLOR_COLUMN_WIDTH },
+        { label: 'Case sens.', width: CASE_SENSITIVE_COLUMN_WIDTH },
         { label: 'Regexp', width: REGEX_COLUMN_WIDTH },
     { label: 'Focus', width: FOCUS_COLUMN_WIDTH },
     { label: 'Remove', width: REMOVE_COLUMN_WIDTH },
@@ -103,6 +108,7 @@ const TABLE_MIN_WIDTH =
     DRAG_COLUMN_WIDTH +
     SENTENCE_MIN_COLUMN_WIDTH +
     COLOR_COLUMN_WIDTH +
+    CASE_SENSITIVE_COLUMN_WIDTH +
     REGEX_COLUMN_WIDTH +
     FOCUS_COLUMN_WIDTH +
     REMOVE_COLUMN_WIDTH +
@@ -129,6 +135,7 @@ const createDefaultHighlight = (): HighligtConfig => ({
     text: '',
     color: DEFAULT_HIGHLIGHT_COLOR,
     is_regex: false,
+    case_sensitive: true,
     whole_line: false,
     advanced: false,
     advanced_selections: [],
@@ -151,6 +158,7 @@ const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePaylo
                 text: highlight.text,
                 color: highlight.color,
                 is_regex: highlight.is_regex,
+                case_sensitive: highlight.case_sensitive,
                 select_mode: 'custom',
                 custom_select: '',
                 whole_line: false,
@@ -169,6 +177,7 @@ const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePaylo
             text: highlight.text,
             color: highlight.color,
             is_regex: highlight.is_regex,
+            case_sensitive: highlight.case_sensitive,
             select_mode: highlight.whole_line ? 'whole_line' : 'match',
             custom_select: '',
             whole_line: highlight.whole_line,
@@ -277,6 +286,7 @@ const HighLighSettings: React.FC = () => {
                     text: h.text ?? '',
                     color,
                     is_regex: isRegex,
+                    case_sensitive: h.case_sensitive ?? true,
                     whole_line: advancedEnabled ? false : (h.whole_line ?? selectMode === 'whole_line'),
                     advanced: advancedEnabled,
                     advanced_selections: advancedSelections,
@@ -535,6 +545,7 @@ const HighLighSettings: React.FC = () => {
                                     text: h.text ?? '',
                                     color,
                                     is_regex: isRegex,
+                                    case_sensitive: h.case_sensitive ?? true,
                                     whole_line: advancedEnabled ? false : (h.whole_line ?? selectMode === 'whole_line'),
                                     advanced: advancedEnabled,
                                     advanced_selections: advancedEnabled ? (persistedAdv.length > 0 ? persistedAdv : [createAdvancedSelection(color, h.custom_select ?? '')]) : [],
@@ -699,6 +710,20 @@ const HighLighSettings: React.FC = () => {
                                                         }}
                                                     />
                                                 </span>
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: CASE_SENSITIVE_COLUMN_WIDTH, minWidth: CASE_SENSITIVE_COLUMN_WIDTH, maxWidth: CASE_SENSITIVE_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Case sensitive: Match text with case sensitivity" placement="top" arrow>
+                                                <Checkbox
+                                                    size="small"
+                                                    checked={filter.case_sensitive}
+                                                    onChange={(e) => setHighlights(highlights!.map(f => f.id === filter.id ? { ...f, case_sensitive: e.target.checked } : f))}
+                                                />
                                             </Tooltip>
                                         </Box>
                                     </TableCell>

@@ -48,6 +48,8 @@ struct HighlightMessage {
     text: String,
     color: String,
     is_regex: bool,
+    #[serde(default = "default_true")]
+    case_sensitive: bool,
     #[serde(default)]
     select_mode: HighlightSelectMode,
     #[serde(default)]
@@ -66,6 +68,7 @@ struct HighlightSettings {
     text: String,
     color: String,
     is_regex: bool,
+    case_sensitive: bool,
     select_mode: HighlightSelectMode,
     custom_groups: Vec<usize>,
     advanced_custom: Vec<AdvancedSelectionSetting>,
@@ -124,6 +127,8 @@ struct AppState {
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     message_id_counter: Arc<AtomicU64>,
 }
+
+fn default_true() -> bool { true }
 
 fn parse_custom_groups(custom_select: &str) -> Vec<usize> {
     let mut seen = HashSet::new();
@@ -329,8 +334,10 @@ fn process_line(input_line: String, highlights_vec: &[HighlightSettings], messag
         if !hl.text.is_empty() {
             let does_match = if hl.is_regex {
                 hl.regex.as_ref().map_or(false, |r| r.is_match(&line))
-            } else {
+            } else if hl.case_sensitive {
                 line.contains(&hl.text as &str)
+            } else {
+                line.to_lowercase().contains(&hl.text.to_lowercase() as &str)
             };
             if does_match {
                 if hl.remove {
@@ -362,8 +369,23 @@ fn process_line(input_line: String, highlights_vec: &[HighlightSettings], messag
                                 line = regex.replace_all(&line, "").to_string();
                             }
                         }
+                    } else if hl.case_sensitive {
+                        line = line.replace(
+                            &hl.text as &str,
+                            "",
+                        );
                     } else {
-                        line = line.replace(&hl.text as &str, "");
+                        let lower_text = hl.text.to_lowercase();
+                        let lower_line = line.to_lowercase();
+                        let mut result = String::new();
+                        let mut search_from = 0usize;
+                        while let Some(pos) = lower_line[search_from..].find(&lower_text as &str) {
+                            let abs = search_from + pos;
+                            result.push_str(&line[search_from..abs]);
+                            search_from = abs + lower_text.len();
+                        }
+                        result.push_str(&line[search_from..]);
+                        line = result;
                     }
                 } else {
                     if hl.select_mode == HighlightSelectMode::WholeLine {
@@ -401,11 +423,25 @@ fn process_line(input_line: String, highlights_vec: &[HighlightSettings], messag
                                     .to_string();
                             }
                         }
-                    } else {
+                    } else if hl.case_sensitive {
                         line = line.replace(
                             &hl.text as &str,
                             &format!("<span style=\"color:{}\">{}</span>", hl.color, hl.text),
                         );
+                    } else {
+                        let lower_text = hl.text.to_lowercase();
+                        let lower_line = line.to_lowercase();
+                        let mut result = String::new();
+                        let mut search_from = 0usize;
+                        while let Some(pos) = lower_line[search_from..].find(&lower_text as &str) {
+                            let abs = search_from + pos;
+                            result.push_str(&line[search_from..abs]);
+                            let matched_slice = &line[abs..abs + lower_text.len()];
+                            result.push_str(&format!("<span style=\"color:{}\">{}</span>", hl.color, matched_slice));
+                            search_from = abs + lower_text.len();
+                        }
+                        result.push_str(&line[search_from..]);
+                        line = result;
                     }
                 }
                 if hl.focus && !hl.remove {
@@ -487,7 +523,12 @@ async fn set_highlights(
     for elem in highlights {
         let text = elem.text.clone();
         let cur_regex = if elem.is_regex {
-            match regex::Regex::new(&text) {
+            let pattern = if elem.case_sensitive {
+                text.clone()
+            } else {
+                format!("(?i){}", text)
+            };
+            match regex::Regex::new(&pattern) {
                 Ok(reg) => Some(reg),
                 Err(err) => {
                     println!("Failed to set regex: {}", err);
@@ -532,6 +573,7 @@ async fn set_highlights(
             text: elem.text,
             color: elem.color,
             is_regex: elem.is_regex,
+            case_sensitive: elem.case_sensitive,
             select_mode,
             custom_groups,
             advanced_custom,
