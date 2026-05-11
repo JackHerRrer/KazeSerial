@@ -22,6 +22,35 @@
 html, body {
   height: 100%;
   overflow: hidden;
+  color-scheme: dark;
+}
+
+/* Custom dark scrollbars (fallback for browsers not supporting color-scheme) */
+* {
+  scrollbar-color: #555 #1e1e1e;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}
+
+*::-webkit-scrollbar-corner {
+  background: #1e1e1e;
 }
 
 body {
