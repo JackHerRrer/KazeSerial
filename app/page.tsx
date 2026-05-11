@@ -532,42 +532,42 @@ export default function Home() {
             </Box>
           </Box>
 
-          {/* Settings panel — resizable when open, thin strip when closed */}
-          {isSettingsPanelOpen ? (
-            <Resizable
-              enable={{ left: true, top: false, right: false, bottom: false, topLeft: false, topRight: false, bottomLeft: false, bottomRight: false }}
-              minWidth={220}
-              maxWidth='70%'
-              defaultSize={{ width: '30%', height: '100%' }}
-              style={{ height: '100%', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-            >
-              <Box sx={{ flex: 1, overflow: 'hidden' }}>
-                <ControlPanel />
-              </Box>
-            </Resizable>
-          ) : (
-            <Box
-              sx={{
-                height: '100%',
-                flexShrink: 0,
-                borderLeft: '1px solid #333',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'flex-start',
-                pt: 5,
-                px: 1,
-              }}
-            >
-              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-                {'Settings'.split('').map((char, i) => (
-                  <Typography key={i} sx={{ fontSize: '0.875rem', color: 'text.secondary', letterSpacing: 0, userSelect: 'none', lineHeight: 1.3 }}>
-                    {char}
-                  </Typography>
-                ))}
-              </Box>
+          {/* Settings panel — always mounted to preserve connection state */}
+          <Resizable
+            enable={{ left: isSettingsPanelOpen, top: false, right: false, bottom: false, topLeft: false, topRight: false, bottomLeft: false, bottomRight: false }}
+            minWidth={isSettingsPanelOpen ? 220 : 36}
+            maxWidth={isSettingsPanelOpen ? '70%' : 36}
+            size={isSettingsPanelOpen ? undefined : { width: 36, height: '100%' }}
+            defaultSize={{ width: '30%', height: '100%' }}
+            style={{ height: '100%', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}
+          >
+            {/* ControlPanel: always mounted, hidden when panel is collapsed */}
+            <Box sx={{ flex: 1, overflow: 'hidden', display: isSettingsPanelOpen ? 'flex' : 'none', flexDirection: 'column' }}>
+              <ControlPanel />
             </Box>
-          )}
+            {/* Collapsed strip: vertical "Settings" label */}
+            {!isSettingsPanelOpen && (
+              <Box
+                sx={{
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'flex-start',
+                  pt: 5,
+                  px: 1,
+                }}
+              >
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                  {'Settings'.split('').map((char, i) => (
+                    <Typography key={i} sx={{ fontSize: '0.875rem', color: 'text.secondary', letterSpacing: 0, userSelect: 'none', lineHeight: 1.3 }}>
+                      {char}
+                    </Typography>
+                  ))}
+                </Box>
+              </Box>
+            )}
+          </Resizable>
         </Container>
     </ThemeProvider>
   );
