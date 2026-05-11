@@ -94,6 +94,7 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 - Clicking the same line again deselects it
 - Text selection (copy-paste) is preserved: if `window.getSelection().toString()` is non-empty when `mouseup/click` fires, the click is ignored
 - The selected line ID can be controlled externally via a `selectedLineId` prop (used by the focus panel)
+- **Copy-paste with newlines**: an `onCopy` handler on the terminal Box intercepts clipboard writes. It iterates over rendered `.serial-terminal-row` elements, clips each to the selection range, and joins the resulting strings with `\n`. This ensures that multi-line selections paste with proper line breaks, working around the fact that `react-window` uses `position: absolute` rows (which the browser does not separate with newlines on its own).
 
 ### Focus panel click behavior
 - Clicking a line in the **focus panel** scrolls the **main panel** to the corresponding line (matched by `id`) using `align: "center", behavior: "smooth"`
@@ -141,9 +142,10 @@ Each row represents one rule. Columns (left to right):
 | Column | Width | Description |
 |---|---|---|
 | Drag handle | 28px | `DragIndicatorIcon`, draggable for reordering |
-| Sentence | min 180px | Text input for the pattern |
+| Search | min 180px | Text input for the pattern. Turns red (MUI `error` state) when `Regexp` is checked and the pattern is not a valid regex |
 | Color | 36px | Native `<input type="color">` |
-| Regexp | 36px | Checkbox — treat sentence as regex |
+| Case sens. | 36px | Checkbox — match with case sensitivity (default: checked) |
+| Regexp | 36px | Checkbox — treat search text as regex |
 | Focus | 36px | Checkbox — send matching lines to focus panel |
 | Remove | 36px | Checkbox — remove matched text from output |
 | Whole line | 36px | Checkbox — apply highlight/removal to entire line |
@@ -153,13 +155,14 @@ Each row represents one rule. Columns (left to right):
 Column headers are rotated **-45°** from the bottom-left corner with `overflow: visible`. The table has a horizontal scrollbar when the panel is too narrow.
 
 ### Tooltips
-Every option cell has a MUI `Tooltip` (placement `top`, with arrow):
-- **Color**: *"Highlight color applied to matching text"*
-- **Regexp**: *"Treat the sentence as a regular expression (regex)"*
-- **Focus**: *"Display the full matching line in the focus panel"*
-- **Remove**: *"Remove only the matched text from the line, not the entire line"*
-- **Whole line**: *"Apply the highlight or removal to the entire line instead of just the matched text"*
-- **Advanced**: *"Enable advanced mode to colorize individual regex capture groups with different colors (requires regex)"*
+Every option cell has a MUI `Tooltip` (placement `top`, with arrow). Each tooltip begins with the option name in uppercase followed by a colon:
+- **COLOR**: *"Highlight color applied to matching text"*
+- **CASE SENS.**: *"Match text with case sensitivity"*
+- **REGEXP**: *"Treat the search as a regular expression"*
+- **FOCUS**: *"Display the whole line in the focus panel"*
+- **REMOVE**: *"Remove the text instead of highlighting it"*
+- **WHOLE LINE**: *"Highlight or remove the entire line instead of just the matched text"*
+- **ADVANCED**: *"Enable advanced mode to colorize individual regex capture groups with different colors (requires regex)"*
 - **Delete**: *"Delete this rule"*
 
 ### Drag-and-drop reordering
@@ -184,6 +187,13 @@ When `advanced = true`, the color picker on the parent row is displayed with `op
 When `advanced = true`, the "Whole line" checkbox is disabled.
 When `is_regex = false`, the "Advanced" checkbox is disabled.
 
+### Save / Load buttons
+Above the table (top-left, overlapping the table header slightly), two icon buttons allow exporting and importing the full rules set:
+- **Load** (`FolderOpenIcon`) — opens a file picker filtered to `.json`, reads and parses the file, replaces the current rules
+- **Save** (`SaveIcon`) — opens a save dialog filtered to `.json`, writes the current rules as formatted JSON
+
+These are independent from the auto-save to `AppConfig`.
+
 ### Persistence
 On every change, highlights are:
 1. Sent to the Rust backend via `invoke("set_highlights", { highlights: [...] })`
@@ -199,6 +209,7 @@ interface HighligtConfig {
   text: string;
   color: string;           // hex color e.g. "#cc7f12"
   is_regex: boolean;
+  case_sensitive: boolean; // default true
   whole_line: boolean;
   advanced: boolean;
   advanced_selections: AdvancedSelection[];
@@ -266,9 +277,14 @@ Rules are applied in order. For each rule that matches:
 6. **`remove = false` + regex + `advanced`**: wrap each capture group in its own colored span. Groups are sorted by start position; overlapping groups are skipped (first wins). If no groups are configured, fallback to coloring the whole match.
 7. **`remove = false` + regex (no advanced, custom groups)**: wrap specified capture groups in colored span; if no groups, color the whole match.
 8. **`remove = false` + regex (simple)**: replace match with `<span style="color:COLOR">$0</span>`.
-9. **`remove = false` + plain text**: replace text with `<span style="color:COLOR">text</span>`.
+9. **`remove = false` + plain text + case sensitive**: replace text with `<span style="color:COLOR">text</span>`.
+10. **`remove = false` + plain text + case insensitive**: same, but matches regardless of case, preserving the original casing of the matched text in the output.
 
 If `focus = true` and `remove = false`, the line is marked `matched = true`.
+
+The `case_sensitive` flag controls matching behavior:
+- For **regex** rules: when `false`, the pattern is prefixed with `(?i)` before compiling.
+- For **plain text** rules: when `false`, matching and replacement use `to_lowercase()` on both sides, with the original casing of the matched text preserved in the HTML output.
 
 The `rawline` field is set to the original unprocessed string whenever any rule matched (so the "refresh" feature can reprocess).
 
@@ -292,6 +308,7 @@ struct HighlightMessage {
     text: String,
     color: String,
     is_regex: bool,
+    case_sensitive: bool,   // default true
     select_mode: HighlightSelectMode,  // "match" | "whole_line" | "custom"
     custom_select: String,
     whole_line: bool,
