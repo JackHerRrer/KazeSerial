@@ -390,7 +390,7 @@ export default function Home() {
                       transformOrigin={{ vertical: 'top', horizontal: 'right' }}
                     >
                       <MenuItem onClick={() => { appendLogs(10000); setMainMenuAnchor(null); }}>Demo - Append 10k logs</MenuItem>
-                      <MenuItem onClick={() => { regenerateLogs(); setMainMenuAnchor(null); }}>Demo - Append 10 logs</MenuItem>
+                      <MenuItem onClick={() => { regenerateLogs(); setMainMenuAnchor(null); }}>Demo - Clear and add 10 logs</MenuItem>
                     </Menu>
                   </Box>
                   <SerialTerminal
