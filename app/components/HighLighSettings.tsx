@@ -130,6 +130,24 @@ const isInvalidRegex = (text: string, isRegex: boolean): boolean => {
     try { new RegExp(text); return false; } catch { return true; }
 };
 
+const countCaptureGroups = (pattern: string): number => {
+    try {
+        // Use a dummy match to count; RegExp doesn't expose group count directly
+        // so we inspect the exec result length on an empty string
+        const m = new RegExp(`(${pattern})|`).exec('');
+        return m ? m.length - 2 : 0;
+    } catch { return 0; }
+};
+
+const hasInvalidGroup = (selector: string, pattern: string): boolean => {
+    if (!selector.trim()) return false;
+    const total = countCaptureGroups(pattern);
+    return selector.split(',').some(part => {
+        const n = parseInt(part.trim(), 10);
+        return !isNaN(n) && (n < 1 || n > total);
+    });
+};
+
 const createDefaultHighlight = (): HighligtConfig => ({
     id: Date.now() + Math.floor(Math.random() * 1000000),
     text: '',
@@ -878,6 +896,7 @@ const HighLighSettings: React.FC = () => {
                                                                         handleAdvancedSelectionChange(filter.id, selection.id, 'selector', e.target.value)
                                                                     }
                                                                     disabled={filter.remove}
+                                                                    error={hasInvalidGroup(selection.selector, filter.text)}
                                                                     sx={{
                                                                         width: 55,
                                                                         '& .MuiInputBase-input': {
