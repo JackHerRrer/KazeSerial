@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, type SyntheticEvent} from 'react';
+import React, { useState, useRef, useEffect, type SyntheticEvent } from 'react';
 import Container from '@mui/material/Container';
 import Box from '@mui/material/Box';
 import { Resizable } from 're-resizable';
@@ -8,7 +8,7 @@ import type { ListImperativeAPI } from 'react-window';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -27,29 +27,23 @@ import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal from './components/SerialTerminal';
 import { SerialMessage } from './types/SerialMessage';
-let currentTime = 0;
+
+// Shared timestamp for demo log generation — reset on each regenerate call
+let demoTime = 0;
 
 const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-  },
-  typography: {
-    button: {
-      textTransform: 'none'
-    }
-  }
+  palette: { mode: 'dark' },
+  typography: { button: { textTransform: 'none' } },
 });
 
-// Generate fake UART logs
-const generateLogs = (count: number) =>  {
-  const logs = [];
-
+/** Generates synthetic UART-style log lines for demo purposes */
+const generateDemoLogs = (count: number): string[] => {
+  const result: string[] = [];
   for (let i = 0; i < count; i++) {
-    currentTime += Math.random() * 0.1;
-    const timestamp = `[${currentTime.toFixed(6)}]`;
-    let message = '';
-    
+    demoTime += Math.random() * 0.1;
+    const timestamp = `[${demoTime.toFixed(6)}]`;
     const type = Math.random();
+    let message: string;
     if (type < 0.1) {
       message = `ERROR: Connection timeout at address 0x${Math.floor(Math.random() * 0xffff).toString(16)}                                                                                                        00000000`;
     } else if (type < 0.3) {
@@ -59,100 +53,66 @@ const generateLogs = (count: number) =>  {
     } else {
       message = `DEBUG: Processing data chunk ${i} state=${Math.floor(Math.random() * 5)}`;
     }
-    logs.push(`${timestamp} ${message}`);
+    result.push(`${timestamp} ${message}`);
   }
-  return logs;
-
+  return result;
 };
-
-const serialUart = ['UART0', 'UART1', 'UART2', 'UART3'];
-const initialLogs: SerialMessage[] = [];
-
 
 export default function Home() {
   const listRefMain = useRef<ListImperativeAPI>(null!);
   const listRefFocus = useRef<ListImperativeAPI>(null!);
   const ignoreMainScrollUntilRef = useRef(0);
   const ignoreFocusScrollUntilRef = useRef(0);
-  
-  const [logs, setLogs] = useState<SerialMessage[]>(initialLogs);
-  const [focusLogs, setFocusLogs] = useState<SerialMessage[]>(initialLogs);
+
+  const [logs, setLogs] = useState<SerialMessage[]>([]);
+  const [focusLogs, setFocusLogs] = useState<SerialMessage[]>([]);
   const [selectedMainLineId, setSelectedMainLineId] = useState<number | null>(null);
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
-
-
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
   const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(null);
 
+  // Demo: send a batch of generated lines to the backend for processing and append
   const appendLogs = (count: number) => {
-    let newLogs: String[] = generateLogs(count);
-    invoke<void>("append_logs_line", { lines: newLogs })
-    .then(() => {
-    }).catch((err: unknown) => {
-        console.error(err);
-    });
+    invoke<void>('append_logs_line', { lines: generateDemoLogs(count) })
+      .catch((err: unknown) => console.error(err));
   };
 
-  const addSingleLog = (log: SerialMessage) => {
-    let insertedIndex: number = logs.length;
-    setLogs(prevLogs => {
-      return [...prevLogs, log];
-    });
-    return insertedIndex; // Retourne l'index de la ligne insérée
-  };
-
-  const addSingleFocusLog = (log: SerialMessage) => {
-    let tmpArr = [log];
-    setFocusLogs(prevLogs => [...prevLogs, ...tmpArr]);
-  };
+  // Demo: reset and send a small batch through the backend (replaces current logs)
   const regenerateLogs = () => {
-    currentTime = 0; // Reset time for new logs
-    let logs :String[] = generateLogs(10);
-    invoke<string[]>("add_logs_line", { lines: logs })
-    .then((s) => {
-        //console.log("port opened:", s);
-    }).catch((err: unknown) => {
-        console.error(err);
-    });
+    demoTime = 0;
+    invoke<void>('add_logs_line', { lines: generateDemoLogs(10) })
+      .catch((err: unknown) => console.error(err));
   };
-  const clearLogs = () => {
-    let tmpArr: SerialMessage[] = [];
-    setLogs(tmpArr);
-  };
-  const clearFocusLogs = () => {
-    let tmpArr: SerialMessage[] = [];
-    setFocusLogs(tmpArr);
-  };
-  const onClickFocusLogs = (id:number) => {
-    const list = listRefMain.current;
-    // Trouver l'index du message dans logs en utilisant son id
+
+  const clearLogs = () => setLogs([]);
+  const clearFocusLogs = () => setFocusLogs([]);
+
+  // Click on a focus row: scroll the main terminal to the matching line and highlight it
+  const onClickFocusLogs = (id: number) => {
     const index = logs.findIndex(log => log.id === id);
-    
     if (index !== -1) {
-      const list = listRefMain.current;
-      list?.scrollToRow({
-        align: "center", // Centre l'élément dans la vue
-        behavior: "smooth", // Animation fluide
-        index: index
-      });
+      listRefMain.current?.scrollToRow({ align: 'center', behavior: 'smooth', index });
       setSelectedMainLineId(prev => prev === id ? null : id);
     }
   };
+
+  // Re-apply current highlight rules to all existing raw lines
   const onClickRefreshAll = () => {
-    let currentLogs = logs;
+    const rawLines = logs.map(log => log.rawline ?? log.message);
     clearFocusLogs();
     clearLogs();
-    let logs_string:String[] = [];
-    for (let log of currentLogs) {
-      logs_string.push(log.rawline ?? log.message);
-    }
-    invoke<string[]>("add_logs_line", { lines: logs_string })
-      .then((s) => {
-      }).catch((err: unknown) => {
-        console.error(err);
-      });
+    invoke<void>('add_logs_line', { lines: rawLines })
+      .catch((err: unknown) => console.error(err));
+  };
+
+  const addSingleLog = (log: SerialMessage) => {
+    setLogs(prev => [...prev, log]);
+  };
+
+  const addSingleFocusLog = (log: SerialMessage) => {
+    setFocusLogs(prev => [...prev, log]);
   };
   useEffect(() => {
     if (isMainAutoScrollEnabled && listRefMain.current && logs.length > 0) {
@@ -165,53 +125,34 @@ export default function Home() {
   }, [logs, focusLogs, isMainAutoScrollEnabled, isFocusAutoScrollEnabled]);
 
   useEffect(() => {
-      //listen to a event
-      const unlisten_serial_data = listen<SerialMessage>("serial-data", (e) => {
-        //console.log(e);
-        //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
-        let serialMessage: SerialMessage = e.payload;
-        addSingleLog(serialMessage);
-        if(e.payload.matched)
-        {
-          addSingleFocusLog(serialMessage);
-        }
-      });
-      //listen to a event
-      const unlisten_serial_datas = listen<SerialMessage[]>("serial-datas", (e) => {
-        //console.log(e);
-        //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
-        let serialMessages: SerialMessage[] = e.payload;
-        setLogs(serialMessages)
-      });
-      const unlisten_serial_datas_append = listen<SerialMessage[]>("serial-datas-append", (e) => {
-        setLogs(prevLogs => [...prevLogs, ...e.payload]);
-      });
-      const unlisten_serial_datas_focus_append = listen<SerialMessage[]>("serial-datas-focus-append", (e) => {
-        setFocusLogs(prevLogs => [...prevLogs, ...e.payload]);
-      });
-      const unlisten_serial_datas_focus = listen<SerialMessage[]>("serial-datas-focus", (e) => {
-        //console.log(e);
-        //console.log("receive " + e.payload.message.length + " is matched" + e.payload.matched);
-        let serialMessages: SerialMessage[] = e.payload;
-        setFocusLogs(serialMessages)
-      });
-
-      return () => {
-        unlisten_serial_data.then(f => f());
-        unlisten_serial_datas.then(f => f());
-        unlisten_serial_datas_focus.then(f => f());
-        unlisten_serial_datas_append.then(f => f());
-        unlisten_serial_datas_focus_append.then(f => f());
-      }
-    }, [] );
+    const unlisten_serial_data = listen<SerialMessage>('serial-data', (e) => {
+      addSingleLog(e.payload);
+      if (e.payload.matched) addSingleFocusLog(e.payload);
+    });
+    const unlisten_serial_datas = listen<SerialMessage[]>('serial-datas', (e) => {
+      setLogs(e.payload);
+    });
+    const unlisten_serial_datas_focus = listen<SerialMessage[]>('serial-datas-focus', (e) => {
+      setFocusLogs(e.payload);
+    });
+    const unlisten_serial_datas_append = listen<SerialMessage[]>('serial-datas-append', (e) => {
+      setLogs(prev => [...prev, ...e.payload]);
+    });
+    const unlisten_serial_datas_focus_append = listen<SerialMessage[]>('serial-datas-focus-append', (e) => {
+      setFocusLogs(prev => [...prev, ...e.payload]);
+    });
+    return () => {
+      unlisten_serial_data.then(f => f());
+      unlisten_serial_datas.then(f => f());
+      unlisten_serial_datas_focus.then(f => f());
+      unlisten_serial_datas_append.then(f => f());
+      unlisten_serial_datas_focus_append.then(f => f());
+    };
+  }, []);
 
 
   const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
-    listRef.current?.scrollToRow({
-      align: "end",
-      behavior: behavior,
-      index: rowIndex,
-    });
+    listRef.current?.scrollToRow({ align: 'end', behavior, index: rowIndex });
   };
 
   const onToggleAutoScrollFromLogs = () => {
@@ -245,27 +186,15 @@ export default function Home() {
     setIsAutoScrollEnabled: React.Dispatch<React.SetStateAction<boolean>>,
     ignoreScrollUntilRef: React.MutableRefObject<number>
   ) => (event: SyntheticEvent<HTMLDivElement>) => {
-    if (Date.now() < ignoreScrollUntilRef.current) {
-      return;
-    }
-
-    if (event.nativeEvent == null) {
-      return;
-    }
-    const myTarget: HTMLDivElement = event.nativeEvent.target as HTMLDivElement;
-    const diff = myTarget.scrollHeight - myTarget.clientHeight - myTarget.scrollTop;
-
-    if (diff == 0) {
-      if (!isAutoScrollEnabled) {
-        setIsAutoScrollEnabled(true);
-      }
-    } else if (diff > 30) {
-      if (isAutoScrollEnabled) {
-        setIsAutoScrollEnabled(false);
-      }
+    if (Date.now() < ignoreScrollUntilRef.current || event.nativeEvent == null) return;
+    const target = event.nativeEvent.target as HTMLDivElement;
+    const diff = target.scrollHeight - target.clientHeight - target.scrollTop;
+    if (diff === 0 && !isAutoScrollEnabled) {
+      setIsAutoScrollEnabled(true);
+    } else if (diff > 30 && isAutoScrollEnabled) {
+      setIsAutoScrollEnabled(false);
     }
   };
-  console.log("render page");
 
   return (
     <ThemeProvider theme={darkTheme}>
@@ -613,10 +542,7 @@ export default function Home() {
               style={{ height: '100%', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
             >
               <Box sx={{ flex: 1, overflow: 'hidden' }}>
-                <ControlPanel
-                  onAppendLogs={() => appendLogs(10000)}
-                  onRegenerateLogs={regenerateLogs}
-                />
+                <ControlPanel />
               </Box>
             </Resizable>
           ) : (

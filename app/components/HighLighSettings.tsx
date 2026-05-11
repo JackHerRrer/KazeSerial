@@ -208,118 +208,93 @@ const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePaylo
 };
 
 
-export function useCustomHilightsState(p0?: never[]): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
+export function useCustomHilightsState(): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
     const [value, setValue] = useState<HighligtConfig[]>();
-
-    useEffect(() => {
-        return () => {
-        // do cleanup
-        };
-    }, [value]);
 
     const customSetValue = useCallback((newValue: HighligtConfig[]) => {
         setValue(newValue);
-        invoke<void>("set_highlights", { highlights: toHighlightPayload(newValue) })
-            .then(() => {
-                saveHighlightsToFile(newValue);
-            }).catch((err: unknown) => {
-                console.error(err);
-            });
+        invoke<void>('set_highlights', { highlights: toHighlightPayload(newValue) })
+            .then(() => saveHighlightsToFile(newValue))
+            .catch((err: unknown) => console.error(err));
     }, []);
-    // Sauvegarde des surlignages dans un fichier JSON local
-    async function saveHighlightsToFile(highlightsToSave: HighligtConfig[]) {
-        const filePath = 'highlight_settings.json';
-        try {
-            await writeTextFile(
-            filePath,
-            JSON.stringify(highlightsToSave, null, 2), { baseDir: BaseDirectory.AppConfig }
-            );
-        } catch (e) {
-            console.log('Erreur lors de la sauvegarde : ' + e);
-        }
-    }
+
     return [value, customSetValue];
 }
 
+/** Persists highlight rules to AppConfig/highlight_settings.json */
+async function saveHighlightsToFile(highlights: HighligtConfig[]) {
+    try {
+        await writeTextFile('highlight_settings.json', JSON.stringify(highlights, null, 2), {
+            baseDir: BaseDirectory.AppConfig,
+        });
+    } catch (e) {
+        console.error('Failed to save highlights:', e);
+    }
+}
+
+/** Parses a persisted JSON config entry into a runtime HighligtConfig, with safe defaults */
+function parsePersistedHighlight(
+    h: PersistedHighlightConfig,
+    index: number,
+    normalizeSelectMode: (isRegex: boolean, mode: HighlightSelectMode) => HighlightSelectMode,
+    getSelectModeFromPersisted: (h: PersistedHighlightConfig) => HighlightSelectMode,
+): HighligtConfig {
+    const isRegex = h.is_regex ?? true;
+    const color = h.color ?? DEFAULT_HIGHLIGHT_COLOR;
+    const selectMode = normalizeSelectMode(isRegex, getSelectModeFromPersisted(h));
+    const explicitAdvanced = typeof h.advanced === 'boolean' ? h.advanced : selectMode === 'custom';
+    const advancedEnabled = explicitAdvanced && isRegex;
+    const persistedAdvancedSelections = (h.advanced_selections ?? []).map((s, si) => ({
+        id: s.id ?? Date.now() + index + si,
+        color: s.color ?? color,
+        selector: s.selector ?? s.custom_select ?? '',
+    }));
+    return {
+        id: h.id ?? Date.now() + index,
+        text: h.text ?? '',
+        color,
+        is_regex: isRegex,
+        case_sensitive: h.case_sensitive ?? true,
+        whole_line: advancedEnabled ? false : (h.whole_line ?? selectMode === 'whole_line'),
+        advanced: advancedEnabled,
+        advanced_selections: advancedEnabled
+            ? (persistedAdvancedSelections.length > 0
+                ? persistedAdvancedSelections
+                : [createAdvancedSelection(color, h.custom_select ?? '')])
+            : [],
+        focus: h.remove ? false : (h.focus ?? true),
+        remove: h.remove ?? false,
+    };
+}
+
 const HighLighSettings: React.FC = () => {
-    const [highlights, setHighlights] = useCustomHilightsState([]);
+    const [highlights, setHighlights] = useCustomHilightsState();
     const [draggedHighlightId, setDraggedHighlightId] = useState<number | null>(null);
     const [dropIndicator, setDropIndicator] = useState<{ id: number; position: 'before' | 'after' } | null>(null);
 
-    const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode => {
-        return value === 'match' || value === 'whole_line' || value === 'custom';
-    };
+    const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode =>
+        value === 'match' || value === 'whole_line' || value === 'custom';
 
     const getSelectModeFromPersisted = (highlight: PersistedHighlightConfig): HighlightSelectMode => {
-        if (isHighlightSelectMode(highlight.select_mode)) {
-            return highlight.select_mode;
-        }
-        if (highlight.whole_line) {
-            return 'whole_line';
-        }
+        if (isHighlightSelectMode(highlight.select_mode)) return highlight.select_mode;
+        if (highlight.whole_line) return 'whole_line';
         return 'match';
     };
 
-    const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode): HighlightSelectMode => {
-        if (!isRegex && selectMode === 'custom') {
-            return 'match';
-        }
-        return selectMode;
-    };
-
-
-
-
-
-
-    // Chargement des surlignages depuis le fichier JSON au démarrage
+    const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode): HighlightSelectMode =>
+        (!isRegex && selectMode === 'custom') ? 'match' : selectMode;
+    // Load highlights from AppConfig on mount
     async function loadHighlightsFromFile() {
-        const filePath = 'highlight_settings.json';
         try {
-            const result = await readTextFile(filePath, { baseDir: BaseDirectory.AppConfig });
-            const highlights = JSON.parse(result) as PersistedHighlightConfig[];
-            let tmpArr: HighligtConfig[] = [];
-            highlights.forEach((h, index) => {
-                const isRegex = h.is_regex ?? true;
-                const color = h.color ?? DEFAULT_HIGHLIGHT_COLOR;
-                const selectMode = normalizeSelectMode(isRegex, getSelectModeFromPersisted(h));
-
-                const explicitAdvanced = typeof h.advanced === 'boolean' ? h.advanced : selectMode === 'custom';
-                const advancedEnabled = explicitAdvanced && isRegex;
-
-                const persistedAdvancedSelections = (h.advanced_selections ?? []).map((selection, selectionIndex) => ({
-                    id: selection.id ?? Date.now() + index + selectionIndex,
-                    color: selection.color ?? color,
-                    selector: selection.selector ?? selection.custom_select ?? '',
-                }));
-
-                const advancedSelections = advancedEnabled
-                    ? (persistedAdvancedSelections.length > 0
-                        ? persistedAdvancedSelections
-                        : [createAdvancedSelection(color, h.custom_select ?? '')])
-                    : [];
-
-                tmpArr.push({
-                    id: h.id ?? Date.now() + index,
-                    text: h.text ?? '',
-                    color,
-                    is_regex: isRegex,
-                    case_sensitive: h.case_sensitive ?? true,
-                    whole_line: advancedEnabled ? false : (h.whole_line ?? selectMode === 'whole_line'),
-                    advanced: advancedEnabled,
-                    advanced_selections: advancedSelections,
-                    focus: h.remove ? false : h.focus ?? true,
-                    remove: h.remove ?? false,
-                });
-            });
-            setHighlights(tmpArr);
+            const result = await readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig });
+            const persisted = JSON.parse(result) as PersistedHighlightConfig[];
+            setHighlights(persisted.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
         } catch (e) {
-            console.log('Erreur lors du chargement : ' + e);
-        }  
+            console.error('Failed to load highlights:', e);
+        }
     }
     useEffect(() => {
         loadHighlightsFromFile();
-        console.log("run once");
     }, []);
 
     const handleAddHighlight = async () => {
@@ -547,31 +522,7 @@ const HighLighSettings: React.FC = () => {
                         try {
                             const result = await readTextFile(filePath);
                             const parsed = JSON.parse(result) as PersistedHighlightConfig[];
-                            const tmpArr: HighligtConfig[] = parsed.map((h, index) => {
-                                const isRegex = h.is_regex ?? true;
-                                const color = h.color ?? DEFAULT_HIGHLIGHT_COLOR;
-                                const selectMode = normalizeSelectMode(isRegex, getSelectModeFromPersisted(h));
-                                const explicitAdvanced = typeof h.advanced === 'boolean' ? h.advanced : selectMode === 'custom';
-                                const advancedEnabled = explicitAdvanced && isRegex;
-                                const persistedAdv = (h.advanced_selections ?? []).map((s, si) => ({
-                                    id: s.id ?? Date.now() + index + si,
-                                    color: s.color ?? color,
-                                    selector: s.selector ?? s.custom_select ?? '',
-                                }));
-                                return {
-                                    id: h.id ?? Date.now() + index,
-                                    text: h.text ?? '',
-                                    color,
-                                    is_regex: isRegex,
-                                    case_sensitive: h.case_sensitive ?? true,
-                                    whole_line: advancedEnabled ? false : (h.whole_line ?? selectMode === 'whole_line'),
-                                    advanced: advancedEnabled,
-                                    advanced_selections: advancedEnabled ? (persistedAdv.length > 0 ? persistedAdv : [createAdvancedSelection(color, h.custom_select ?? '')]) : [],
-                                    focus: h.remove ? false : (h.focus ?? true),
-                                    remove: h.remove ?? false,
-                                };
-                            });
-                            setHighlights(tmpArr);
+                            setHighlights(parsed.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
                         } catch (e) {
                             console.error('Failed to load highlights:', e);
                         }

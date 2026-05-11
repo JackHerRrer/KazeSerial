@@ -18,22 +18,17 @@ type SerialPortEntry = {
 };
 
 const SerialSettings: React.FC = () => {
-  const isCancelled = React.useRef(false);
   const [port, setPort] = useState('');
   const [baudRate, setBaudRate] = useState(115200);
   const [ports, setPorts] = useState<SerialPortEntry[]>([]);
   const [isConnected, setIsConnected] = useState(false);
 
   React.useEffect(() => {
-    if(port.length == 0 && ports[0] == undefined)
-    {
-        listUart();
-    }
+    listUart();
     const unlisten = listen('serial-disconnected', () => {
       setIsConnected(false);
     });
     return () => {
-      isCancelled.current = true;
       unlisten.then(fn => fn());
     };
   }, []);
@@ -45,36 +40,29 @@ const SerialSettings: React.FC = () => {
   const handleBaudRateChange = (event: SelectChangeEvent<number>) => {
     setBaudRate(event.target.value as number);
   };
+
   const handleConnect = () => {
-    if(isConnected == false)
-    {
-        const selectedPortEntry = ports.find(p => p.portName === port);
-        const portDescription = selectedPortEntry?.deviceLabel ?? '';
-        invoke<void>("open_port", { portName: port, portDescription, baudRate: baudRate })
-            .then(() => {
-                setIsConnected(true);
-            }).catch(() => {
-                // error already displayed in the log via serial-data event
-            });
-    }else{
-        invoke<void>("close_port")
-            .then(() => {
-                setIsConnected(false);
-            }).catch((err: unknown) => {
-                console.error(err);
-            });
+    if (!isConnected) {
+      const selectedPortEntry = ports.find(p => p.portName === port);
+      const portDescription = selectedPortEntry?.deviceLabel ?? '';
+      invoke<void>('open_port', { portName: port, portDescription, baudRate })
+        .then(() => setIsConnected(true))
+        .catch(() => {
+          // Connection errors are surfaced as system messages in the log
+        });
+    } else {
+      invoke<void>('close_port')
+        .then(() => setIsConnected(false))
+        .catch((err: unknown) => console.error(err));
     }
   };
-  const listUart = () => {
-    invoke<SerialPortEntry[]>("list_ports")
-      .then((s) => {
-        if (!isCancelled.current) {
-            setPorts(s);
-        }
 
-        if(port.length == 0 && s[0] != undefined && s[0].portName.length > 0)
-        {
-            setPort(s[0].portName);
+  const listUart = () => {
+    invoke<SerialPortEntry[]>('list_ports')
+      .then((s) => {
+        setPorts(s);
+        if (!port && s[0]?.portName) {
+          setPort(s[0].portName);
         }
       })
       .catch((err: unknown) => {

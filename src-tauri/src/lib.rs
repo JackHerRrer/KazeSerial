@@ -1,13 +1,12 @@
 use regex::Regex;
 use rayon::prelude::*;
 use serialport::{SerialPort, SerialPortType};
-
 use std::collections::HashSet;
-use std::{fs, sync::Arc};
+use std::fs;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,21 +69,23 @@ struct HighlightSettings {
     is_regex: bool,
     case_sensitive: bool,
     select_mode: HighlightSelectMode,
-    custom_groups: Vec<usize>,
-    advanced_custom: Vec<AdvancedSelectionSetting>,
+    custom_groups: Vec<usize>,   // capture group indices for plain custom mode
+    advanced_custom: Vec<AdvancedSelectionSetting>, // per-group color overrides
     focus: bool,
     remove: bool,
-    regex: Option<Regex>,
+    regex: Option<Regex>,        // compiled regex, None for plain-text rules
 }
+
 #[derive(Clone, serde::Serialize)]
 struct Payload {
-    id : u64,
+    id: u64,
     message: String,
     matched: bool,
     rawline: Option<String>,
     removed_line: bool,
 }
 
+/// Returns the current UTC wall-clock time as HH:MM:SS.
 fn make_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -97,6 +98,8 @@ fn make_timestamp() -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
+/// Emits a KazeSerial system message as a regular `serial-data` event.
+/// These appear in the log with format `[HH:MM:SS] KazeSerial: {msg}`.
 fn emit_system_msg(app: &tauri::AppHandle, msg: String) {
     let message_id = app
         .state::<AppState>()
@@ -130,6 +133,8 @@ struct AppState {
 
 fn default_true() -> bool { true }
 
+/// Parses a comma-separated list of positive capture group indices (e.g. "1,2,3"),
+/// deduplicating and discarding invalid entries.
 fn parse_custom_groups(custom_select: &str) -> Vec<usize> {
     let mut seen = HashSet::new();
     custom_select
@@ -140,6 +145,7 @@ fn parse_custom_groups(custom_select: &str) -> Vec<usize> {
         .collect()
 }
 
+/// Merges overlapping byte-range spans and removes empty ones.
 fn normalize_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     spans.retain(|(start, end)| start < end);
     spans.sort_by_key(|(start, end)| (*start, *end));
@@ -159,6 +165,7 @@ fn normalize_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     merged
 }
 
+/// Collects the byte ranges (relative to the whole match start) for the requested capture groups.
 fn collect_selected_group_spans(
     captures: &regex::Captures<'_>,
     selected_groups: &[usize],
@@ -182,6 +189,8 @@ fn collect_selected_group_spans(
     normalize_spans(spans)
 }
 
+/// Wraps selected spans of `segment` in a `<span style="color:">` tag.
+/// Falls back to wrapping the entire segment when no spans are provided.
 fn build_highlighted_segment(segment: &str, spans: &[(usize, usize)], color: &str) -> String {
     let mut output = String::new();
     let mut cursor = 0usize;
@@ -198,6 +207,7 @@ fn build_highlighted_segment(segment: &str, spans: &[(usize, usize)], color: &st
     output
 }
 
+/// Removes the selected spans from `segment`, keeping surrounding text.
 fn build_removed_segment(segment: &str, spans: &[(usize, usize)]) -> String {
     let mut output = String::new();
     let mut cursor = 0usize;
@@ -211,6 +221,7 @@ fn build_removed_segment(segment: &str, spans: &[(usize, usize)]) -> String {
     output
 }
 
+/// Applies highlighting to a single regex match using a custom group selection.
 fn highlight_custom_regex_match(
     captures: &regex::Captures<'_>,
     color: &str,
@@ -230,6 +241,7 @@ fn highlight_custom_regex_match(
     build_highlighted_segment(segment, &spans, color)
 }
 
+/// Collects non-overlapping colored spans from all advanced selections (first match wins).
 fn collect_advanced_colored_spans(
     captures: &regex::Captures<'_>,
     advanced_custom: &[AdvancedSelectionSetting],
@@ -262,6 +274,7 @@ fn collect_advanced_colored_spans(
     resolved
 }
 
+/// Applies per-group color highlights to a single regex match in advanced mode.
 fn highlight_advanced_regex_match(
     captures: &regex::Captures<'_>,
     advanced_custom: &[AdvancedSelectionSetting],
@@ -293,6 +306,7 @@ fn highlight_advanced_regex_match(
     output
 }
 
+/// Collects the union of all group indices across all advanced selections (for removal).
 fn collect_advanced_groups_for_remove(advanced_custom: &[AdvancedSelectionSetting]) -> Vec<usize> {
     let mut seen = HashSet::new();
     let mut groups: Vec<usize> = Vec::new();
@@ -308,6 +322,7 @@ fn collect_advanced_groups_for_remove(advanced_custom: &[AdvancedSelectionSettin
     groups
 }
 
+/// Removes selected capture groups from a single regex match.
 fn remove_custom_regex_match(captures: &regex::Captures<'_>, selected_groups: &[usize]) -> String {
     let Some(whole_match) = captures.get(0) else {
         return String::new();
@@ -323,6 +338,8 @@ fn remove_custom_regex_match(captures: &regex::Captures<'_>, selected_groups: &[
     build_removed_segment(segment, &spans)
 }
 
+/// Applies all highlight rules to a single raw log line and returns the processed [`Payload`].
+/// This function is pure (no I/O, no locking) so it can safely be called from rayon threads.
 fn process_line(input_line: String, highlights_vec: &[HighlightSettings], message_id: u64) -> Payload {
     let rawline = input_line.clone();
     let mut line = input_line;
