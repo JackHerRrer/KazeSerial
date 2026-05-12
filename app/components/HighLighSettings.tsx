@@ -11,6 +11,8 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Tooltip from '@mui/material/Tooltip';
+import Popover from '@mui/material/Popover';
+import Sketch from '@uiw/react-color-sketch';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
@@ -266,6 +268,72 @@ function parsePersistedHighlight(
         remove: h.remove ?? false,
     };
 }
+
+// Color palette matching the screenshot (8 columns × 4 rows, light → dark)
+const PRESET_COLORS = [
+    '#99c1f1', '#8ff0a4', '#f9f06b', '#ffbe6f', '#f66151', '#dc8add', '#cdab8f', '#ffffff',
+    '#62a0ea', '#57e389', '#f8e45c', '#ffa348', '#ed333b', '#c061cb', '#b5835a', '#deddda',
+    '#3584e4', '#33d17a', '#f6d32d', '#ff7800', '#e01b24', '#9141ac', '#986a44', '#9a9996',
+    '#1c71d8', '#26a269', '#f5c211', '#e66100', '#c01c28', '#813d9c', '#856e3c', '#5e5c64',
+    '#1a5fb4', '#25a168', '#e5a50a', '#c54500', '#a51d2d', '#613583', '#63452c', '#241f31',
+
+];
+
+interface ColorPickerButtonProps {
+    value: string;
+    onChange: (color: string) => void;
+    disabled?: boolean;
+    opacity?: number;
+}
+
+const ColorPickerButton: React.FC<ColorPickerButtonProps> = ({ value, onChange, disabled, opacity }) => {
+    const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+
+    return (
+        <>
+            <Box
+                component="button"
+                onClick={disabled ? undefined : (e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget)}
+                sx={{
+                    width: 26,
+                    height: 26,
+                    backgroundColor: value,
+                    border: '2px solid rgba(255,255,255,0.25)',
+                    borderRadius: '3px',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    opacity: opacity ?? 1,
+                    padding: 0,
+                    flexShrink: 0,
+                    '&:hover': disabled ? {} : { borderColor: 'rgba(255,255,255,0.6)' },
+                }}
+            />
+            <Popover
+                open={Boolean(anchorEl)}
+                anchorEl={anchorEl}
+                onClose={() => setAnchorEl(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+            >
+                <Sketch
+                    color={value}
+                    presetColors={PRESET_COLORS}
+                    disableAlpha
+                    onChange={(color) => onChange(color.hex)}
+                    style={{
+                        '--sketch-background': '#2b2b2b',
+                        '--sketch-box-shadow': 'none',
+                        '--sketch-swatch-border-top': '1px solid #444',
+                        '--sketch-swatch-box-shadow': 'rgb(0 0 0 / 40%) 0px 0px 0px 1px inset',
+                        '--sketch-alpha-box-shadow': 'rgb(0 0 0 / 40%) 0px 0px 0px 1px inset',
+                        '--editable-input-color': '#fff',
+                        '--editable-input-label-color': '#aaa',
+                        '--editable-input-box-shadow': '0 0 0 1px #555 inset',
+                    } as React.CSSProperties}
+                />
+            </Popover>
+        </>
+    );
+};
 
 const HighLighSettings: React.FC = () => {
     const [highlights, setHighlights] = useCustomHilightsState();
@@ -661,25 +729,12 @@ const HighLighSettings: React.FC = () => {
                                         sx={{ width: COLOR_COLUMN_WIDTH, minWidth: COLOR_COLUMN_WIDTH, maxWidth: COLOR_COLUMN_WIDTH, p: 0 }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                                            <Tooltip title="Color: Highlight color applied to matching text" placement="top" arrow>
-                                                <span>
-                                                    <input
-                                                        type="color"
-                                                        value={filter.color.slice(0, 7)}
-                                                        disabled={filter.remove || filter.advanced}
-                                                        onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
-                                                        style={{
-                                                            width: 26,
-                                                            height: 26,
-                                                            padding: 0,
-                                                            border: 'none',
-                                                            background: 'none',
-                                                            cursor: (filter.remove || filter.advanced) ? 'not-allowed' : 'pointer',
-                                                            opacity: filter.advanced ? 0.2 : filter.remove ? 0.45 : 1,
-                                                        }}
-                                                    />
-                                                </span>
-                                            </Tooltip>
+                                            <ColorPickerButton
+                                                value={filter.color.slice(0, 7)}
+                                                onChange={(color) => handleHighlightChange(filter.id, 'color', color)}
+                                                disabled={filter.remove || filter.advanced}
+                                                opacity={filter.advanced ? 0.2 : filter.remove ? 0.45 : 1}
+                                            />
                                         </Box>
                                     </TableCell>
                                     <TableCell
@@ -815,23 +870,11 @@ const HighLighSettings: React.FC = () => {
                                                         key={selection.id}
                                                         sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}
                                                     >
-                                                        <input
-                                                            type="color"
+                                                        <ColorPickerButton
                                                             value={selection.color.slice(0, 7)}
+                                                            onChange={(color) => handleAdvancedSelectionChange(filter.id, selection.id, 'color', color)}
                                                             disabled={filter.remove}
-                                                            onChange={(e) =>
-                                                                handleAdvancedSelectionChange(filter.id, selection.id, 'color', e.target.value)
-                                                            }
-                                                            style={{
-                                                                width: 26,
-                                                                height: 26,
-                                                                padding: 0,
-                                                                border: 'none',
-                                                                background: 'none',
-                                                                cursor: filter.remove ? 'not-allowed' : 'pointer',
-                                                                opacity: filter.remove ? 0.45 : 1,
-                                                                flexShrink: 0,
-                                                            }}
+                                                            opacity={filter.remove ? 0.45 : 1}
                                                         />
                                                         <Tooltip
                                                             title="Enter the numbers of the capture groups from your regular expression that you want to colorize, separated by commas (e.g. 1,2). In a regex, parentheses define groups numbered left to right starting at 1. For example, with the regex '(\w+): (\d+)', group 1 matches the word before the colon and group 2 matches the number after it."
