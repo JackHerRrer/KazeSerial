@@ -56,6 +56,7 @@ Kaze Serial is a modern, high-performance serial terminal application built with
 
 2. Install frontend dependencies:
    ```bash
+   npm i @tauri-apps/cli
    npm install
    ```
 
