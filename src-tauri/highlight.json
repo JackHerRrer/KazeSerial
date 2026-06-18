@@ -1,0 +1,90 @@
+[
+  {
+    "id": 1777632572013,
+    "text": "ERROR",
+    "color": "#e01b24",
+    "is_regex": false,
+    "whole_line": false,
+    "advanced": false,
+    "advanced_selections": [],
+    "focus": false,
+    "remove": false
+  },
+  {
+    "id": 1777626231053,
+    "text": "WARN|404",
+    "color": "#ff7800",
+    "is_regex": true,
+    "whole_line": false,
+    "advanced": false,
+    "advanced_selections": [],
+    "focus": false,
+    "remove": false
+  },
+  {
+    "id": 1777965186334,
+    "text": "UpdateMng.dwl: GET",
+    "color": "#f9f06b",
+    "is_regex": false,
+    "whole_line": true,
+    "advanced": false,
+    "advanced_selections": [],
+    "focus": true,
+    "remove": false
+  },
+  {
+    "id": 1777964585478,
+    "text": "APIREST: (GET|PUT|POST|DELETE)(.*)",
+    "color": "#57e389",
+    "is_regex": true,
+    "whole_line": false,
+    "advanced": true,
+    "advanced_selections": [
+      {
+        "id": 1778056242314,
+        "color": "#57e389",
+        "selector": "1"
+      },
+      {
+        "id": 1778056501997,
+        "color": "#c061cb",
+        "selector": "2"
+      }
+    ],
+    "focus": false,
+    "remove": false
+  },
+  {
+    "id": 1777655133213,
+    "text": "(\\[\\d\\d:\\d\\d:\\d\\d\\.\\d\\d\\d\\]) (.*?): ",
+    "color": "#99c1f1",
+    "is_regex": true,
+    "whole_line": false,
+    "advanced": true,
+    "advanced_selections": [
+      {
+        "id": 1777981986163,
+        "color": "#5e5c64",
+        "selector": "1"
+      },
+      {
+        "id": 1778234813830,
+        "color": "#99c1f1",
+        "selector": "2"
+      }
+    ],
+    "focus": false,
+    "remove": false
+  },
+  {
+    "id": 1778060577766,
+    "text": "\\w*0000000$",
+    "color": "#cc7f12",
+    "is_regex": true,
+    "whole_line": false,
+    "advanced": false,
+    "advanced_selections": [],
+    "focus": false,
+    "remove": true
+  }
+]

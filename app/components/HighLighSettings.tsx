@@ -2,88 +2,375 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import IconButton from '@mui/material/IconButton';
+import Checkbox from '@mui/material/Checkbox';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import Tooltip from '@mui/material/Tooltip';
+import Popover from '@mui/material/Popover';
+import Sketch from '@uiw/react-color-sketch';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
+import SaveIcon from '@mui/icons-material/Save';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import { invoke } from "@tauri-apps/api/core";
 
-import { create, writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 
+
+type HighlightSelectMode = 'match' | 'whole_line' | 'custom';
+
+interface AdvancedSelection {
+    id: number;
+    color: string;
+    selector: string;
+}
 
 interface HighligtConfig {
   id: number;
   text: string;
   color: string;
+  is_regex: boolean;
+  case_sensitive: boolean;
+    whole_line: boolean;
+    advanced: boolean;
+    advanced_selections: AdvancedSelection[];
+  focus: boolean;
+  remove: boolean;
 }
 
+interface PersistedAdvancedSelection {
+    id?: number;
+    color?: string;
+    selector?: string;
+    custom_select?: string;
+}
 
-export function useCustomHilightsState(p0?: never[]): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
+interface PersistedHighlightConfig {
+    id?: number;
+    text?: string;
+    color?: string;
+    is_regex?: boolean;
+    case_sensitive?: boolean;
+    whole_line?: boolean;
+    advanced?: boolean;
+    advanced_selections?: PersistedAdvancedSelection[];
+    focus?: boolean;
+    remove?: boolean;
+    select_mode?: HighlightSelectMode;
+    custom_select?: string;
+}
+
+interface HighlightMessagePayload {
+    id: number;
+    text: string;
+    color: string;
+    is_regex: boolean;
+    case_sensitive: boolean;
+    select_mode: HighlightSelectMode;
+    custom_select: string;
+    whole_line: boolean;
+    focus: boolean;
+    remove: boolean;
+    advanced_selections?: Array<{
+        color: string;
+        custom_select: string;
+    }>;
+}
+
+const DEFAULT_HIGHLIGHT_COLOR = '#cc7f12';
+const COLOR_COLUMN_WIDTH = 36;
+const CASE_SENSITIVE_COLUMN_WIDTH = 36;
+const REGEX_COLUMN_WIDTH = 36;
+const FOCUS_COLUMN_WIDTH = 36;
+const REMOVE_COLUMN_WIDTH = 36;
+const WHOLE_LINE_COLUMN_WIDTH = 36;
+const ADVANCED_COLUMN_WIDTH = 36;
+const DRAG_COLUMN_WIDTH = 28;
+const SENTENCE_MIN_COLUMN_WIDTH = 180;
+const OPTION_COLUMNS = [
+        { label: 'Color', width: COLOR_COLUMN_WIDTH },
+        { label: 'Case sens.', width: CASE_SENSITIVE_COLUMN_WIDTH },
+        { label: 'Regexp', width: REGEX_COLUMN_WIDTH },
+    { label: 'Focus', width: FOCUS_COLUMN_WIDTH },
+    { label: 'Remove', width: REMOVE_COLUMN_WIDTH },
+        { label: 'Whole line', width: WHOLE_LINE_COLUMN_WIDTH },
+        { label: 'Advanced', width: ADVANCED_COLUMN_WIDTH },
+] as const;
+const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
+const ACTION_COLUMN_WIDTH = 36;
+const TABLE_MIN_WIDTH =
+    DRAG_COLUMN_WIDTH +
+    SENTENCE_MIN_COLUMN_WIDTH +
+    COLOR_COLUMN_WIDTH +
+    CASE_SENSITIVE_COLUMN_WIDTH +
+    REGEX_COLUMN_WIDTH +
+    FOCUS_COLUMN_WIDTH +
+    REMOVE_COLUMN_WIDTH +
+    WHOLE_LINE_COLUMN_WIDTH +
+    ADVANCED_COLUMN_WIDTH +
+    ACTION_COLUMN_WIDTH;
+
+const createAdvancedSelection = (
+    color: string = DEFAULT_HIGHLIGHT_COLOR,
+    selector: string = '',
+): AdvancedSelection => ({
+    id: Date.now() + Math.floor(Math.random() * 1000000),
+    color,
+    selector,
+});
+
+const isInvalidRegex = (text: string, isRegex: boolean): boolean => {
+    if (!isRegex || text.length === 0) return false;
+    try { new RegExp(text); return false; } catch { return true; }
+};
+
+const countCaptureGroups = (pattern: string): number => {
+    try {
+        // Use a dummy match to count; RegExp doesn't expose group count directly
+        // so we inspect the exec result length on an empty string
+        const m = new RegExp(`(${pattern})|`).exec('');
+        return m ? m.length - 2 : 0;
+    } catch { return 0; }
+};
+
+const hasInvalidGroup = (selector: string, pattern: string): boolean => {
+    if (!selector.trim()) return false;
+    const total = countCaptureGroups(pattern);
+    return selector.split(',').some(part => {
+        const n = parseInt(part.trim(), 10);
+        return !isNaN(n) && (n < 1 || n > total);
+    });
+};
+
+const createDefaultHighlight = (): HighligtConfig => ({
+    id: Date.now() + Math.floor(Math.random() * 1000000),
+    text: '',
+    color: DEFAULT_HIGHLIGHT_COLOR,
+    is_regex: false,
+    case_sensitive: true,
+    whole_line: false,
+    advanced: false,
+    advanced_selections: [],
+    focus: true,
+    remove: false,
+});
+
+const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePayload[] => {
+    const payload: HighlightMessagePayload[] = [];
+
+    highlights.forEach((highlight) => {
+        if (highlight.advanced && highlight.is_regex) {
+            const advancedSelectionsPayload =
+                highlight.advanced_selections.length > 0
+                    ? highlight.advanced_selections
+                    : [{ id: highlight.id, color: highlight.color, selector: '' }];
+
+            payload.push({
+                id: highlight.id,
+                text: highlight.text,
+                color: highlight.color,
+                is_regex: highlight.is_regex,
+                case_sensitive: highlight.case_sensitive,
+                select_mode: 'custom',
+                custom_select: '',
+                whole_line: false,
+                focus: highlight.focus,
+                remove: highlight.remove,
+                advanced_selections: advancedSelectionsPayload.map((selection) => ({
+                    color: selection.color,
+                    custom_select: selection.selector,
+                })),
+            });
+            return;
+        }
+
+        payload.push({
+            id: highlight.id,
+            text: highlight.text,
+            color: highlight.color,
+            is_regex: highlight.is_regex,
+            case_sensitive: highlight.case_sensitive,
+            select_mode: highlight.whole_line ? 'whole_line' : 'match',
+            custom_select: '',
+            whole_line: highlight.whole_line,
+            focus: highlight.focus,
+            remove: highlight.remove,
+        });
+    });
+
+    return payload;
+};
+
+
+export function useCustomHilightsState(): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
     const [value, setValue] = useState<HighligtConfig[]>();
 
-    useEffect(() => {
-        return () => {
-        // do cleanup
-        };
-    }, [value]);
-
-    const customSetValue = useCallback((newValue:HighligtConfig[]) => {
+    const customSetValue = useCallback((newValue: HighligtConfig[]) => {
         setValue(newValue);
-        invoke<string[]>("set_highlights", { highlights: newValue })
-            .then((s) => {
-                //console.log("Update highlights:",s);
-                saveHighlightsToFile(newValue);
-            }).catch((err: unknown) => {
-                console.error(err);
-            });
+        invoke<void>('set_highlights', { highlights: toHighlightPayload(newValue) })
+            .then(() => saveHighlightsToFile(newValue))
+            .catch((err: unknown) => console.error(err));
     }, []);
-    // Sauvegarde des surlignages dans un fichier JSON local
-    async function saveHighlightsToFile(highlightsToSave: HighligtConfig[]) {
-        const filePath = 'highlight_settings.json';
-        try {
-            await writeTextFile(
-            filePath,
-            JSON.stringify(highlightsToSave, null, 2), { baseDir: BaseDirectory.AppConfig }
-            );
-        } catch (e) {
-            console.log('Erreur lors de la sauvegarde : ' + e);
-        }
-    }
+
     return [value, customSetValue];
 }
 
+/** Persists highlight rules to AppConfig/highlight_settings.json */
+async function saveHighlightsToFile(highlights: HighligtConfig[]) {
+    try {
+        await writeTextFile('highlight_settings.json', JSON.stringify(highlights, null, 2), {
+            baseDir: BaseDirectory.AppConfig,
+        });
+    } catch (e) {
+        console.error('Failed to save highlights:', e);
+    }
+}
+
+/** Parses a persisted JSON config entry into a runtime HighligtConfig, with safe defaults */
+function parsePersistedHighlight(
+    h: PersistedHighlightConfig,
+    index: number,
+    normalizeSelectMode: (isRegex: boolean, mode: HighlightSelectMode) => HighlightSelectMode,
+    getSelectModeFromPersisted: (h: PersistedHighlightConfig) => HighlightSelectMode,
+): HighligtConfig {
+    const isRegex = h.is_regex ?? true;
+    const color = h.color ?? DEFAULT_HIGHLIGHT_COLOR;
+    const selectMode = normalizeSelectMode(isRegex, getSelectModeFromPersisted(h));
+    const explicitAdvanced = typeof h.advanced === 'boolean' ? h.advanced : selectMode === 'custom';
+    const advancedEnabled = explicitAdvanced && isRegex;
+    const persistedAdvancedSelections = (h.advanced_selections ?? []).map((s, si) => ({
+        id: s.id ?? Date.now() + index + si,
+        color: s.color ?? color,
+        selector: s.selector ?? s.custom_select ?? '',
+    }));
+    return {
+        id: h.id ?? Date.now() + index,
+        text: h.text ?? '',
+        color,
+        is_regex: isRegex,
+        case_sensitive: h.case_sensitive ?? true,
+        whole_line: advancedEnabled ? false : (h.whole_line ?? selectMode === 'whole_line'),
+        advanced: advancedEnabled,
+        advanced_selections: advancedEnabled
+            ? (persistedAdvancedSelections.length > 0
+                ? persistedAdvancedSelections
+                : [createAdvancedSelection(color, h.custom_select ?? '')])
+            : [],
+        focus: h.remove ? false : (h.focus ?? true),
+        remove: h.remove ?? false,
+    };
+}
+
+// Color palette matching the screenshot (8 columns × 4 rows, light → dark)
+const PRESET_COLORS = [
+    '#99c1f1', '#8ff0a4', '#f9f06b', '#ffbe6f', '#f66151', '#dc8add', '#cdab8f', '#ffffff',
+    '#62a0ea', '#57e389', '#f8e45c', '#ffa348', '#ed333b', '#c061cb', '#b5835a', '#deddda',
+    '#3584e4', '#33d17a', '#f6d32d', '#ff7800', '#e01b24', '#9141ac', '#986a44', '#9a9996',
+    '#1c71d8', '#26a269', '#f5c211', '#e66100', '#c01c28', '#813d9c', '#856e3c', '#5e5c64',
+    '#1a5fb4', '#25a168', '#e5a50a', '#c54500', '#a51d2d', '#613583', '#63452c', '#241f31',
+
+];
+
+interface ColorPickerButtonProps {
+    value: string;
+    onChange: (color: string) => void;
+    disabled?: boolean;
+    opacity?: number;
+}
+
+const ColorPickerButton: React.FC<ColorPickerButtonProps> = ({ value, onChange, disabled, opacity }) => {
+    const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+
+    return (
+        <>
+            <Box
+                component="button"
+                onClick={disabled ? undefined : (e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget)}
+                sx={{
+                    width: 26,
+                    height: 26,
+                    backgroundColor: value,
+                    border: '2px solid rgba(255,255,255,0.25)',
+                    borderRadius: '3px',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    opacity: opacity ?? 1,
+                    padding: 0,
+                    flexShrink: 0,
+                    '&:hover': disabled ? {} : { borderColor: 'rgba(255,255,255,0.6)' },
+                }}
+            />
+            <Popover
+                open={Boolean(anchorEl)}
+                anchorEl={anchorEl}
+                onClose={() => setAnchorEl(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+            >
+                <Sketch
+                    color={value}
+                    presetColors={PRESET_COLORS}
+                    disableAlpha
+                    onChange={(color) => onChange(color.hex)}
+                    style={{
+                        '--sketch-background': '#2b2b2b',
+                        '--sketch-box-shadow': 'none',
+                        '--sketch-swatch-border-top': '1px solid #444',
+                        '--sketch-swatch-box-shadow': 'rgb(0 0 0 / 40%) 0px 0px 0px 1px inset',
+                        '--sketch-alpha-box-shadow': 'rgb(0 0 0 / 40%) 0px 0px 0px 1px inset',
+                        '--editable-input-color': '#fff',
+                        '--editable-input-label-color': '#aaa',
+                        '--editable-input-box-shadow': '0 0 0 1px #555 inset',
+                    } as React.CSSProperties}
+                />
+            </Popover>
+        </>
+    );
+};
+
 const HighLighSettings: React.FC = () => {
-    const [highlights, setHighlights] = useCustomHilightsState([]);
+    const [highlights, setHighlights] = useCustomHilightsState();
+    const [draggedHighlightId, setDraggedHighlightId] = useState<number | null>(null);
+    const [dropIndicator, setDropIndicator] = useState<{ id: number; position: 'before' | 'after' } | null>(null);
 
+    const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode =>
+        value === 'match' || value === 'whole_line' || value === 'custom';
 
+    const getSelectModeFromPersisted = (highlight: PersistedHighlightConfig): HighlightSelectMode => {
+        if (isHighlightSelectMode(highlight.select_mode)) return highlight.select_mode;
+        if (highlight.whole_line) return 'whole_line';
+        return 'match';
+    };
 
-
-
-
-    // Chargement des surlignages depuis le fichier JSON au démarrage
+    const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode): HighlightSelectMode =>
+        (!isRegex && selectMode === 'custom') ? 'match' : selectMode;
+    // Load highlights from AppConfig on mount
     async function loadHighlightsFromFile() {
-        const filePath = 'highlight_settings.json';
         try {
-            const result = await readTextFile(filePath, { baseDir: BaseDirectory.AppConfig });
-            const highlights = JSON.parse(result);
-            let tmpArr: HighligtConfig[] = [];
-            highlights.forEach((h:HighligtConfig) => tmpArr.push({ id: h.id, text: h.text, color: h.color }));
-            setHighlights(tmpArr);
+            const result = await readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig });
+            const persisted = JSON.parse(result) as PersistedHighlightConfig[];
+            setHighlights(persisted.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
         } catch (e) {
-            console.log('Erreur lors du chargement : ' + e);
-        }  
+            console.error('Failed to load highlights:', e);
+        }
     }
     useEffect(() => {
         loadHighlightsFromFile();
-        console.log("run once");
     }, []);
+
     const handleAddHighlight = async () => {
         if(highlights == undefined) {
-            setHighlights([{ id: Date.now(), text: '', color: '#cc7f12' }]);
+            setHighlights([createDefaultHighlight()]);
             return;
-        };
-        setHighlights([...highlights, { id: Date.now(), text: '', color: '#cc7f12' }]);
+        }
+        setHighlights([...highlights, createDefaultHighlight()]);
     };
 
     const handleRemoveHighlight = (id: number) => {
@@ -91,40 +378,566 @@ const HighLighSettings: React.FC = () => {
         setHighlights(highlights.filter(f => f.id !== id));
     };
 
-    const handleHighlightChange = (id: number, field: keyof HighligtConfig, value: string) => {
+    const handleHighlightChange = (id: number, field: 'text' | 'color', value: string) => {
         if(highlights == undefined) return;
         setHighlights(highlights.map(f => f.id === id ? { ...f, [field]: value } : f));
     };
 
+    const handleHighlightIsRegexChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => {
+            if (f.id !== id) {
+                return f;
+            }
+
+            if (!value) {
+                return {
+                    ...f,
+                    is_regex: false,
+                    advanced: false,
+                    advanced_selections: [],
+                };
+            }
+
+            return {
+                ...f,
+                is_regex: true,
+            };
+        }));
+    };
+
+    const handleHighlightWholeLineChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => {
+            if (f.id !== id) {
+                return f;
+            }
+
+            return {
+                ...f,
+                whole_line: f.advanced ? false : value,
+            };
+        }));
+    };
+
+    const handleHighlightAdvancedChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => {
+            if (f.id !== id) {
+                return f;
+            }
+
+            if (!value) {
+                return {
+                    ...f,
+                    advanced: false,
+                    advanced_selections: [],
+                };
+            }
+
+            if (!f.is_regex) {
+                return {
+                    ...f,
+                    advanced: false,
+                    advanced_selections: [],
+                };
+            }
+
+            return {
+                ...f,
+                advanced: true,
+                whole_line: false,
+                advanced_selections: f.advanced_selections.length > 0
+                    ? f.advanced_selections
+                    : [createAdvancedSelection(f.color, '')],
+            };
+        }));
+    };
+
+    const handleAddAdvancedSelection = (id: number) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => {
+            if (f.id !== id) {
+                return f;
+            }
+
+            return {
+                ...f,
+                advanced_selections: [
+                    ...f.advanced_selections,
+                    createAdvancedSelection(f.color, ''),
+                ],
+            };
+        }));
+    };
+
+    const handleRemoveAdvancedSelection = (id: number, selectionId: number) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => {
+            if (f.id !== id) {
+                return f;
+            }
+
+            if (f.advanced_selections.length <= 1) {
+                return f;
+            }
+
+            return {
+                ...f,
+                advanced_selections: f.advanced_selections.filter(s => s.id !== selectionId),
+            };
+        }));
+    };
+
+    const handleAdvancedSelectionChange = (
+        id: number,
+        selectionId: number,
+        field: 'color' | 'selector',
+        value: string,
+    ) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => {
+            if (f.id !== id) {
+                return f;
+            }
+
+            return {
+                ...f,
+                advanced_selections: f.advanced_selections.map((selection) =>
+                    selection.id === selectionId ? { ...selection, [field]: value } : selection,
+                ),
+            };
+        }));
+    };
+
+    const handleHighlightFocusChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => f.id === id ? { ...f, focus: value } : f));
+    };
+
+    const handleHighlightRemoveChange = (id: number, value: boolean) => {
+        if(highlights == undefined) return;
+        setHighlights(highlights.map(f => f.id === id ? { ...f, remove: value, focus: value ? false : f.focus } : f));
+    };
+
+    const reorderHighlights = (sourceId: number, targetId: number, position: 'before' | 'after') => {
+        if (highlights == undefined || sourceId === targetId) return;
+
+        const sourceIndex = highlights.findIndex((h) => h.id === sourceId);
+        const targetIndex = highlights.findIndex((h) => h.id === targetId);
+
+        if (sourceIndex < 0 || targetIndex < 0) return;
+
+        const reordered = [...highlights];
+        const [moved] = reordered.splice(sourceIndex, 1);
+
+        const adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        const insertIndex = position === 'before' ? adjustedTargetIndex : adjustedTargetIndex + 1;
+
+        reordered.splice(insertIndex, 0, moved);
+        setHighlights(reordered);
+    };
+
+    const handleDragStart = (id: number) => (event: React.DragEvent<HTMLButtonElement>) => {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(id));
+        setDraggedHighlightId(id);
+        setDropIndicator(null);
+    };
+
+    const handleDragOverRow = (id: number) => (event: React.DragEvent<HTMLTableRowElement>) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+
+        const rowRect = event.currentTarget.getBoundingClientRect();
+        const rowMiddle = rowRect.top + rowRect.height / 2;
+        const position = event.clientY < rowMiddle ? 'before' : 'after';
+
+        setDropIndicator({ id, position });
+    };
+
+    const handleDropOnRow = (id: number) => (event: React.DragEvent<HTMLTableRowElement>) => {
+        event.preventDefault();
+
+        if (draggedHighlightId == undefined) {
+            setDropIndicator(null);
+            return;
+        }
+
+        const rowRect = event.currentTarget.getBoundingClientRect();
+        const rowMiddle = rowRect.top + rowRect.height / 2;
+        const position = event.clientY < rowMiddle ? 'before' : 'after';
+
+        reorderHighlights(draggedHighlightId, id, position);
+        setDraggedHighlightId(null);
+        setDropIndicator(null);
+    };
+
+    const handleDragEnd = () => {
+        setDraggedHighlightId(null);
+        setDropIndicator(null);
+    };
+
     return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="subtitle2">Highlight sentence</Typography>
-        <IconButton size="small" onClick={handleAddHighlight}>
-            <AddIcon />
-        </IconButton>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0, width: '100%' }}>
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-start', position: 'relative', zIndex: 1, mb: '-42px' }}>
+                <IconButton
+                    size="medium"
+                    title="Load highlight rules from file"
+                    onClick={async () => {
+                        const filePath = await openDialog({ directory: false, multiple: false, filters: [{ name: 'Highlights', extensions: ['json'] }] }).catch(() => undefined);
+                        if (!filePath) return;
+                        try {
+                            const result = await readTextFile(filePath);
+                            const parsed = JSON.parse(result) as PersistedHighlightConfig[];
+                            setHighlights(parsed.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
+                        } catch (e) {
+                            console.error('Failed to load highlights:', e);
+                        }
+                    }}
+                    sx={{ width: 36, height: 36, border: '1px solid #444' }}
+                >
+                    <FolderOpenIcon fontSize="medium" />
+                </IconButton>
+                <IconButton
+                    size="medium"
+                    title="Save highlight rules to file"
+                    onClick={async () => {
+                        const filePath = await saveDialog({ filters: [{ name: 'Highlights', extensions: ['json'] }] }).catch(() => undefined);
+                        if (filePath && highlights) await writeTextFile(filePath, JSON.stringify(highlights, null, 2));
+                    }}
+                    sx={{ width: 36, height: 36, border: '1px solid #444' }}
+                >
+                    <SaveIcon fontSize="medium" />
+                </IconButton>
+            </Box>
+            <Box sx={{ overflowX: 'auto', overflowY: 'visible', width: '100%' }}>
+                <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH }}>
+                    <TableHead sx={{ overflow: 'visible' }}>
+                        <TableRow sx={{ overflow: 'visible' }}>
+                            <TableCell
+                                sx={{
+                                    width: DRAG_COLUMN_WIDTH,
+                                    minWidth: DRAG_COLUMN_WIDTH,
+                                    maxWidth: DRAG_COLUMN_WIDTH,
+                                    p: 0,
+                                    borderBottom: 'none',
+                                }}
+                            />
+                            <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>Search</TableCell>
+                            {OPTION_COLUMNS.map((optionColumn) => {
+                                return (
+                                    <TableCell
+                                        key={optionColumn.label}
+                                        sx={{
+                                            width: optionColumn.width,
+                                            minWidth: optionColumn.width,
+                                            maxWidth: optionColumn.width,
+                                            p: 0,
+                                            height: '80px',
+                                            overflow: 'visible',
+                                            verticalAlign: 'bottom',
+                                        }}
+                                    >
+                                        <Box sx={{ position: 'relative', width: '100%', height: '100%', overflow: 'visible' }}>
+                                            <Box sx={{
+                                                position: 'absolute',
+                                                bottom: 2,
+                                                left: `${OPTION_LABEL_RIGHT_OFFSET_PX}px`,
+                                                transformOrigin: 'left bottom',
+                                                transform: 'rotate(-45deg)',
+                                                whiteSpace: 'nowrap',
+                                                lineHeight: 1,
+                                            }}>
+                                                {optionColumn.label}
+                                            </Box>
+                                        </Box>
+                                    </TableCell>
+                                );
+                            })}
+                            <TableCell
+                                sx={{
+                                    width: ACTION_COLUMN_WIDTH,
+                                    minWidth: ACTION_COLUMN_WIDTH,
+                                    maxWidth: ACTION_COLUMN_WIDTH,
+                                    p: 0,
+                                }}
+                            />
+                        </TableRow>
+                    </TableHead>
+                    <TableBody>
+                        {highlights?.map((filter) => (
+                            <React.Fragment key={filter.id}>
+                                <TableRow
+                                    onDragOver={handleDragOverRow(filter.id)}
+                                    onDrop={handleDropOnRow(filter.id)}
+                                    sx={{
+                                        opacity: draggedHighlightId === filter.id ? 0.6 : 1,
+                                        ...(filter.advanced && filter.advanced_selections.length > 0 && { '& td, & th': { borderBottom: 'none' } }),
+                                        '& td:not(:first-of-type)': {
+                                            borderTop: dropIndicator?.id === filter.id && dropIndicator.position === 'before' && draggedHighlightId !== filter.id
+                                                ? '2px solid'
+                                                : undefined,
+                                            borderBottom: dropIndicator?.id === filter.id && dropIndicator.position === 'after' && draggedHighlightId !== filter.id
+                                                ? '2px solid'
+                                                : undefined,
+                                            borderTopColor: dropIndicator?.id === filter.id && dropIndicator.position === 'before' && draggedHighlightId !== filter.id
+                                                ? 'primary.main'
+                                                : undefined,
+                                            borderBottomColor: dropIndicator?.id === filter.id && dropIndicator.position === 'after' && draggedHighlightId !== filter.id
+                                                ? 'primary.main'
+                                                : undefined,
+                                        },
+                                    }}
+                                >
+                                    <TableCell
+                                        align="center"
+                                        sx={{
+                                            width: DRAG_COLUMN_WIDTH,
+                                            minWidth: DRAG_COLUMN_WIDTH,
+                                            maxWidth: DRAG_COLUMN_WIDTH,
+                                            p: 0,
+                                            borderBottom: 'none',
+                                        }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <IconButton
+                                                size="small"
+                                                draggable
+                                                onDragStart={handleDragStart(filter.id)}
+                                                onDragEnd={handleDragEnd}
+                                                sx={{ p: 0.25, cursor: 'grab', '&:active': { cursor: 'grabbing' } }}
+                                                aria-label="Reorder filter"
+                                                title="Drag to reorder"
+                                            >
+                                                <DragIndicatorIcon fontSize="small" />
+                                            </IconButton>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>
+                                        <TextField
+                                            size="small"
+                                            placeholder="Filter text"
+                                            value={filter.text}
+                                            onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
+                                            fullWidth
+                                            error={isInvalidRegex(filter.text, filter.is_regex)}
+                                        />
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: COLOR_COLUMN_WIDTH, minWidth: COLOR_COLUMN_WIDTH, maxWidth: COLOR_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <ColorPickerButton
+                                                value={filter.color.slice(0, 7)}
+                                                onChange={(color) => handleHighlightChange(filter.id, 'color', color)}
+                                                disabled={filter.remove || filter.advanced}
+                                                opacity={filter.advanced ? 0.2 : filter.remove ? 0.45 : 1}
+                                            />
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: CASE_SENSITIVE_COLUMN_WIDTH, minWidth: CASE_SENSITIVE_COLUMN_WIDTH, maxWidth: CASE_SENSITIVE_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Case sensitive: Match text with case sensitivity" placement="top" arrow>
+                                                <Checkbox
+                                                    size="small"
+                                                    checked={filter.case_sensitive}
+                                                    onChange={(e) => setHighlights(highlights!.map(f => f.id === filter.id ? { ...f, case_sensitive: e.target.checked } : f))}
+                                                />
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: REGEX_COLUMN_WIDTH, minWidth: REGEX_COLUMN_WIDTH, maxWidth: REGEX_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Regexp: Treat the search as a regular expression" placement="top" arrow>
+                                                <Checkbox
+                                                    size="small"
+                                                    checked={filter.is_regex}
+                                                    onChange={(e) => handleHighlightIsRegexChange(filter.id, e.target.checked)}
+                                                />
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: FOCUS_COLUMN_WIDTH, minWidth: FOCUS_COLUMN_WIDTH, maxWidth: FOCUS_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Focus: Display the whole line in the focus panel" placement="top" arrow>
+                                                <span>
+                                                    <Checkbox
+                                                        size="small"
+                                                        checked={filter.focus}
+                                                        disabled={filter.remove}
+                                                        onChange={(e) => handleHighlightFocusChange(filter.id, e.target.checked)}
+                                                    />
+                                                </span>
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: REMOVE_COLUMN_WIDTH, minWidth: REMOVE_COLUMN_WIDTH, maxWidth: REMOVE_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Remove: Remove the text instead of highlighting it" placement="top" arrow>
+                                                <Checkbox
+                                                    size="small"
+                                                    checked={filter.remove}
+                                                    onChange={(e) => handleHighlightRemoveChange(filter.id, e.target.checked)}
+                                                />
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: WHOLE_LINE_COLUMN_WIDTH, minWidth: WHOLE_LINE_COLUMN_WIDTH, maxWidth: WHOLE_LINE_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Whole line: Highlight or remove the entire line instead of just the matched text" placement="top" arrow>
+                                                <span>
+                                                    <Checkbox
+                                                        size="small"
+                                                        checked={filter.whole_line}
+                                                        disabled={filter.advanced}
+                                                        onChange={(e) => handleHighlightWholeLineChange(filter.id, e.target.checked)}
+                                                    />
+                                                </span>
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: ADVANCED_COLUMN_WIDTH, minWidth: ADVANCED_COLUMN_WIDTH, maxWidth: ADVANCED_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Advanced: Enable advanced mode to colorize individual regex capture groups with different colors (requires regex)" placement="top" arrow>
+                                                <span>
+                                                    <Checkbox
+                                                        size="small"
+                                                        checked={filter.advanced}
+                                                        disabled={!filter.is_regex}
+                                                        onChange={(e) => handleHighlightAdvancedChange(filter.id, e.target.checked)}
+                                                    />
+                                                </span>
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell
+                                        align="center"
+                                        sx={{ width: ACTION_COLUMN_WIDTH, minWidth: ACTION_COLUMN_WIDTH, maxWidth: ACTION_COLUMN_WIDTH, p: 0 }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <Tooltip title="Delete this rule" placement="top" arrow>
+                                                <IconButton size="small" sx={{ p: 0.5 }} onClick={() => handleRemoveHighlight(filter.id)}>
+                                                    <DeleteIcon />
+                                                </IconButton>
+                                            </Tooltip>
+                                        </Box>
+                                    </TableCell>
+                                </TableRow>
+
+                                {filter.advanced && (
+                                    <TableRow
+                                        onDragOver={handleDragOverRow(filter.id)}
+                                        onDrop={handleDropOnRow(filter.id)}
+                                        sx={{ opacity: draggedHighlightId === filter.id ? 0.6 : 1 }}
+                                    >
+                                        <TableCell
+                                            sx={{
+                                                width: DRAG_COLUMN_WIDTH,
+                                                minWidth: DRAG_COLUMN_WIDTH,
+                                                maxWidth: DRAG_COLUMN_WIDTH,
+                                                p: 0,
+                                                borderBottom: 'none',
+                                            }}
+                                        />
+                                        <TableCell
+                                            colSpan={8}
+                                            sx={{ p: 0.5, pl: 4 }}
+                                        >
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                                                <SubdirectoryArrowRightIcon sx={{ color: 'text.disabled', fontSize: '1.1rem', mr: 0.5 }} />
+                                                {filter.advanced_selections.map((selection) => (
+                                                    <Box
+                                                        key={selection.id}
+                                                        sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}
+                                                    >
+                                                        <ColorPickerButton
+                                                            value={selection.color.slice(0, 7)}
+                                                            onChange={(color) => handleAdvancedSelectionChange(filter.id, selection.id, 'color', color)}
+                                                            disabled={filter.remove}
+                                                            opacity={filter.remove ? 0.45 : 1}
+                                                        />
+                                                        <Tooltip
+                                                            title="Enter the numbers of the capture groups from your regular expression that you want to colorize, separated by commas (e.g. 1,2). In a regex, parentheses define groups numbered left to right starting at 1. For example, with the regex '(\w+): (\d+)', group 1 matches the word before the colon and group 2 matches the number after it."
+                                                            placement="top"
+                                                            arrow
+                                                        >
+                                                            <span>
+                                                                <TextField
+                                                                    size="small"
+                                                                    placeholder="1,2"
+                                                                    value={selection.selector}
+                                                                    onChange={(e) =>
+                                                                        handleAdvancedSelectionChange(filter.id, selection.id, 'selector', e.target.value)
+                                                                    }
+                                                                    disabled={filter.remove}
+                                                                    error={hasInvalidGroup(selection.selector, filter.text)}
+                                                                    sx={{
+                                                                        width: 55,
+                                                                        '& .MuiInputBase-input': {
+                                                                            fontSize: '0.75rem',
+                                                                            py: 0.5,
+                                                                        },
+                                                                    }}
+                                                                />
+                                                            </span>
+                                                        </Tooltip>
+                                                        {filter.advanced_selections.length > 1 && (
+                                                            <IconButton
+                                                                size="small"
+                                                                sx={{ p: 0.25 }}
+                                                                onClick={() => handleRemoveAdvancedSelection(filter.id, selection.id)}
+                                                            >
+                                                                <DeleteIcon fontSize="small" />
+                                                            </IconButton>
+                                                        )}
+                                                    </Box>
+                                                ))}
+                                                <IconButton
+                                                    size="small"
+                                                    sx={{ p: 0.5 }}
+                                                    onClick={() => handleAddAdvancedSelection(filter.id)}
+                                                >
+                                                    <AddIcon fontSize="small" />
+                                                </IconButton>
+                                            </Box>
+                                        </TableCell>
+                                    </TableRow>
+                                )}
+                            </React.Fragment>
+                        ))}
+                        <TableRow sx={{ '& td, & th': { borderBottom: 0 } }}>
+                            <TableCell colSpan={9} align="center" sx={{ p: 0 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 34 }}>
+                                    <IconButton size="small" sx={{ p: 0.5 }} onClick={handleAddHighlight}>
+                                        <AddIcon />
+                                    </IconButton>
+                                </Box>
+                            </TableCell>
+                        </TableRow>
+                    </TableBody>
+                </Table>
+            </Box>
         </Box>
-        {highlights?.map((filter) => (
-        <Box key={filter.id} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <TextField
-            size="small"
-            placeholder="Filter text"
-            value={filter.text}
-            onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
-            sx={{ flexGrow: 1 }}
-            />
-            <input
-            type="color"
-            value={filter.color.slice(0, 7)}
-            onChange={(e) => handleHighlightChange(filter.id, 'color', e.target.value)}
-            style={{ width: 40, height: 40, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
-            />
-            <IconButton size="small" onClick={() => handleRemoveHighlight(filter.id)}>
-            <DeleteIcon />
-            </IconButton>
-        </Box>
-        ))}
-    </Box>
     );
 };
 
