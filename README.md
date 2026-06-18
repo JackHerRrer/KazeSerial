@@ -90,3 +90,7 @@ Since I wanted to learn React, i did this simple project, and of course Copilot 
 ## License
 
 [MIT](LICENSE)
+
+
+## Contributor : 
+[JackHerRrer](https://github.com/JackHerRrer)
