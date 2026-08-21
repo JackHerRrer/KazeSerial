@@ -28,4 +28,8 @@ tokio = { version = "1", features = ["full"] }
 regex = "1.11.1"
 rayon = "1"
 tauri-plugin-dialog = "2"
+rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server", "macros", "schemars"] }
+axum = "0.8.4"
+schemars = "1.2.2"
+tokio-util = { version = "0.7.19", features = ["rt"] }
 

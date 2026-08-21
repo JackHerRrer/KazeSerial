@@ -17,6 +17,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
@@ -31,6 +32,13 @@ import { SerialMessage } from './types/SerialMessage';
 
 // Shared timestamp for demo log generation — reset on each regenerate call
 let demoTime = 0;
+
+/// State of the embedded MCP server an agent connects to, as reported by the backend.
+type McpStatus = {
+  running: boolean;
+  url: string | null;
+  port: number | null;
+};
 
 const darkTheme = createTheme({
   palette: { mode: 'dark' },
@@ -71,6 +79,7 @@ export default function Home() {
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
   const [isFileWatching, setIsFileWatching] = useState(false);
+  const [mcpUrl, setMcpUrl] = useState<string | null>(null);
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
   const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(null);
@@ -158,6 +167,18 @@ export default function Home() {
     const unlisten_file_watch_stopped = listen('file-watch-stopped', () => {
       setIsFileWatching(false);
     });
+    // Emitted when an MCP client calls clear_logs, so the window stays in sync
+    // with what the agent just did to the shared buffer.
+    const unlisten_logs_cleared = listen('logs-cleared', () => {
+      clearLogs();
+      clearFocusLogs();
+    });
+
+    // The backend keeps the MCP server alive across webview reloads.
+    invoke<McpStatus>('get_mcp_status')
+      .then(status => setMcpUrl(status.running ? status.url : null))
+      .catch((err: unknown) => console.error(err));
+
     return () => {
       unlisten_serial_data.then(f => f());
       unlisten_serial_datas.then(f => f());
@@ -165,8 +186,18 @@ export default function Home() {
       unlisten_serial_datas_append.then(f => f());
       unlisten_serial_datas_focus_append.then(f => f());
       unlisten_file_watch_stopped.then(f => f());
+      unlisten_logs_cleared.then(f => f());
     };
   }, []);
+
+  // Start or stop the MCP server an agent connects to. The backend also prints the
+  // URL into the log as a system message, so it stays visible and copyable.
+  const onToggleMcpServer = () => {
+    const command = mcpUrl ? 'stop_mcp_server' : 'start_mcp_server';
+    invoke<McpStatus>(command)
+      .then(status => setMcpUrl(status.running ? status.url : null))
+      .catch((err: unknown) => console.error(err));
+  };
 
 
   const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
@@ -322,7 +353,7 @@ export default function Home() {
                         if (selected) {
                           const contents = await readTextFile(selected);
                           const lines = contents.split('\n').filter(l => l.length > 0);
-                          invoke<void>('add_logs_line', { lines }).catch((err: unknown) => console.error(err));
+                          invoke<void>('add_logs_line', { lines, source: selected }).catch((err: unknown) => console.error(err));
                         }
                       }}
                       sx={{
@@ -368,6 +399,32 @@ export default function Home() {
                       }}
                     >
                       <PlayCircleOutlineIcon fontSize="medium" />
+                    </IconButton>
+                    </Tooltip>
+                    <Tooltip
+                      title={mcpUrl
+                        ? `MCP server running on ${mcpUrl} — click to stop`
+                        : 'Expose these logs to an AI agent over MCP'}
+                      placement="top"
+                      arrow
+                    >
+                    <IconButton
+                      aria-label="toggle MCP server"
+                      aria-pressed={mcpUrl !== null}
+                      size="medium"
+                      color="inherit"
+                      onClick={onToggleMcpServer}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: mcpUrl ? 'rgba(76, 175, 80, 0.28)' : 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: mcpUrl ? 'rgba(76, 175, 80, 0.42)' : 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <SmartToyIcon fontSize="medium" />
                     </IconButton>
                     </Tooltip>
                     <Tooltip title="Save logs to file" placement="top" arrow>

@@ -1,3 +1,7 @@
+mod log_store;
+mod mcp;
+
+use log_store::{LogRecord, LogSource, LogStore};
 use regex::Regex;
 use rayon::prelude::*;
 use serialport::{SerialPort, SerialPortType};
@@ -107,7 +111,7 @@ async fn emit_system_msg(app: &tauri::AppHandle, msg: String) {
     let message_id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
     let highlights = state.highlights.lock().await.clone();
     let payload = process_line(raw, &highlights, message_id);
-    let _ = app.emit("serial-data", payload);
+    publish_one(app, payload).await;
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -123,6 +127,72 @@ struct AppState {
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     message_id_counter: Arc<AtomicU64>,
     file_watch_active: Arc<AtomicBool>,
+    /// Every emitted line is recorded here so the MCP server can serve the same
+    /// log the user sees. The webview state is no longer the only copy.
+    log_store: Arc<LogStore>,
+    /// Lock-free mirror of `serial_connection.is_some()`. Reading the connection
+    /// itself would contend with the read loop, which holds it across blocking reads.
+    serial_connected: Arc<AtomicBool>,
+    mcp_server: Arc<Mutex<Option<mcp::McpServerHandle>>>,
+}
+
+/// Derives a store record from an emitted payload. `rawline` carries the untouched
+/// line whenever a highlight rule rewrote `message`, so it wins when present —
+/// MCP consumers must never receive the HTML-decorated variant.
+fn record_of(payload: &Payload) -> LogRecord {
+    LogRecord {
+        id: payload.id,
+        text: payload
+            .rawline
+            .clone()
+            .unwrap_or_else(|| payload.message.clone()),
+        focus: payload.matched,
+        removed: payload.removed_line,
+    }
+}
+
+/// Records a batch and emits it as a full replacement of the webview's log list.
+async fn publish_replace(app: &tauri::AppHandle, results: Vec<Payload>) {
+    let records: Vec<LogRecord> = results.iter().map(record_of).collect();
+    app.state::<AppState>().log_store.replace(records).await;
+
+    let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
+    let _ = app.emit("serial-datas", results);
+    let _ = app.emit("serial-datas-focus", focus);
+}
+
+/// Records a batch and emits it as an append to the webview's log list.
+async fn publish_append(app: &tauri::AppHandle, results: Vec<Payload>) {
+    let records: Vec<LogRecord> = results.iter().map(record_of).collect();
+    app.state::<AppState>().log_store.append(records).await;
+
+    let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
+    let _ = app.emit("serial-datas-append", results);
+    let _ = app.emit("serial-datas-focus-append", focus);
+}
+
+/// Records a single line and emits it as a `serial-data` event.
+async fn publish_one(app: &tauri::AppHandle, payload: Payload) {
+    app.state::<AppState>()
+        .log_store
+        .append(vec![record_of(&payload)])
+        .await;
+    let _ = app.emit("serial-data", payload);
+}
+
+/// Processes `lines` through the current highlight rules, in parallel.
+async fn process_batch(app: &tauri::AppHandle, lines: Vec<String>) -> Vec<Payload> {
+    let state = app.state::<AppState>();
+    let highlights_vec = state.highlights.lock().await.clone();
+    let start_id = state
+        .message_id_counter
+        .fetch_add(lines.len() as u64, Ordering::SeqCst);
+
+    lines
+        .into_par_iter()
+        .enumerate()
+        .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
+        .collect()
 }
 
 fn default_true() -> bool { true }
@@ -487,41 +557,32 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
     process_line(input_line, &highlights_vec, message_id)
 }
 
+/// Replaces the whole log with `lines`. `source` labels where they came from for
+/// MCP clients; pass `None` to leave the current label alone (e.g. when merely
+/// re-applying highlight rules to lines already shown).
 #[tauri::command]
-async fn add_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
-    let app_handle = emitter.clone();
-    let highlights_vec = app_handle.state::<AppState>().highlights.lock().await.clone();
-    let start_id = app_handle.state::<AppState>().message_id_counter.fetch_add(lines.len() as u64, Ordering::SeqCst);
+async fn add_logs_line(
+    lines: Vec<String>,
+    source: Option<String>,
+    emitter: tauri::AppHandle,
+) -> Result<(), String> {
+    if let Some(path) = source {
+        emitter
+            .state::<AppState>()
+            .log_store
+            .set_source(LogSource::File { path })
+            .await;
+    }
 
-    let results: Vec<Payload> = lines
-        .into_par_iter()
-        .enumerate()
-        .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
-        .collect();
-
-    let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
-
-    let _ = app_handle.emit("serial-datas", results);
-    let _ = app_handle.emit("serial-datas-focus", focus);
+    let results = process_batch(&emitter, lines).await;
+    publish_replace(&emitter, results).await;
     Ok(())
 }
 
 #[tauri::command]
 async fn append_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
-    let app_handle = emitter.clone();
-    let highlights_vec = app_handle.state::<AppState>().highlights.lock().await.clone();
-    let start_id = app_handle.state::<AppState>().message_id_counter.fetch_add(lines.len() as u64, Ordering::SeqCst);
-
-    let results: Vec<Payload> = lines
-        .into_par_iter()
-        .enumerate()
-        .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
-        .collect();
-
-    let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
-
-    let _ = app_handle.emit("serial-datas-append", results);
-    let _ = app_handle.emit("serial-datas-focus-append", focus);
+    let results = process_batch(&emitter, lines).await;
+    publish_append(&emitter, results).await;
     Ok(())
 }
 
@@ -655,6 +716,14 @@ async fn open_port(
     match serialport::new(&port_name, baud_rate).open() {
         Ok(port) => {
             *state.serial_connection.lock().await = Some(port);
+            state.serial_connected.store(true, Ordering::SeqCst);
+            state
+                .log_store
+                .set_source(LogSource::Serial {
+                    port: port_name.clone(),
+                    baud_rate,
+                })
+                .await;
             let desc = port_description.unwrap_or_default();
             emit_system_msg(
                 &app,
@@ -682,8 +751,8 @@ async fn open_port(
                                 {
                                     let message_id = app_handle.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
                                     let test = format!("{:#02x} ", &temp[0]);
-                                    let _ = app_handle.emit(
-                                        "serial-data",
+                                    publish_one(
+                                        &app_handle,
                                         Payload {
                                             id:message_id,
                                             message: test,
@@ -691,7 +760,7 @@ async fn open_port(
                                             rawline:None,
                                             removed_line: false,
                                         },
-                                    );
+                                    ).await;
                                     continue;
                                 }
                                 line_buffer.push(temp[0]);
@@ -708,10 +777,7 @@ async fn open_port(
                                     //let mut line = regex_eol.replace_all(&s, "").to_string();
                                     let line = String::from_utf8_lossy(&line_buffer).to_string();
                                     let cur_payload = parse_log_line(line.clone(), app_handle.clone()).await;
-                                    let _ = app_handle.emit(
-                                        "serial-data",
-                                        cur_payload,
-                                    );
+                                    publish_one(&app_handle, cur_payload).await;
                                     line_buffer.clear();
                                 }
                             }
@@ -720,6 +786,10 @@ async fn open_port(
                                 std::thread::sleep(std::time::Duration::from_millis(2));
                             }
                             Err(_) => {
+                                app_handle
+                                    .state::<AppState>()
+                                    .serial_connected
+                                    .store(false, Ordering::SeqCst);
                                 emit_system_msg(
                                     &app_handle,
                                     format!("Connection to {} lost", port_name_loop),
@@ -745,6 +815,7 @@ async fn open_port(
 #[tauri::command]
 async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     *state.serial_connection.lock().await = None;
+    state.serial_connected.store(false, Ordering::SeqCst);
     emit_system_msg(&app, "Connection closed".to_string()).await;
     Ok(())
 }
@@ -766,22 +837,14 @@ async fn watch_file(
 
     let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
+    state
+        .log_store
+        .set_source(LogSource::FileWatch { path: path.clone() })
+        .await;
+
     // Emit initial batch (replaces current logs)
-    {
-        let highlights_vec = app.state::<AppState>().highlights.lock().await.clone();
-        let start_id = app
-            .state::<AppState>()
-            .message_id_counter
-            .fetch_add(lines.len() as u64, Ordering::SeqCst);
-        let results: Vec<Payload> = lines
-            .into_par_iter()
-            .enumerate()
-            .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
-            .collect();
-        let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
-        let _ = app.emit("serial-datas", results);
-        let _ = app.emit("serial-datas-focus", focus);
-    }
+    let results = process_batch(&app, lines).await;
+    publish_replace(&app, results).await;
 
     let active = state.file_watch_active.clone();
     let app_handle = app.clone();
@@ -811,27 +874,8 @@ async fn watch_file(
                             reader.lines().filter_map(|l| l.ok()).collect();
 
                         if !new_lines.is_empty() {
-                            let highlights_vec = app_handle
-                                .state::<AppState>()
-                                .highlights
-                                .lock()
-                                .await
-                                .clone();
-                            let start_id = app_handle
-                                .state::<AppState>()
-                                .message_id_counter
-                                .fetch_add(new_lines.len() as u64, Ordering::SeqCst);
-                            let results: Vec<Payload> = new_lines
-                                .into_par_iter()
-                                .enumerate()
-                                .map(|(i, line)| {
-                                    process_line(line, &highlights_vec, start_id + i as u64)
-                                })
-                                .collect();
-                            let focus: Vec<Payload> =
-                                results.iter().filter(|p| p.matched).cloned().collect();
-                            let _ = app_handle.emit("serial-datas-append", results);
-                            let _ = app_handle.emit("serial-datas-focus-append", focus);
+                            let results = process_batch(&app_handle, new_lines).await;
+                            publish_append(&app_handle, results).await;
                         }
                     }
                 }
@@ -842,6 +886,11 @@ async fn watch_file(
             }
         }
 
+        app_handle
+            .state::<AppState>()
+            .log_store
+            .clear_source_if_watching(&path)
+            .await;
         let _ = app_handle.emit("file-watch-stopped", ());
     });
 
@@ -853,6 +902,91 @@ async fn stop_file_watch(state: tauri::State<'_, AppState>) -> Result<(), String
     state.file_watch_active.store(false, Ordering::SeqCst);
     Ok(())
 }
+
+/// Reported to the UI so it can display the URL to hand to an agent.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpStatus {
+    running: bool,
+    url: Option<String>,
+    port: Option<u16>,
+}
+
+/// Starts the MCP server on loopback unless one is already running, in which case the
+/// existing one is reported as-is rather than rebound. `port` 0 picks a free port.
+async fn ensure_mcp_server(app: &tauri::AppHandle, port: u16) -> Result<McpStatus, String> {
+    let state = app.state::<AppState>();
+    let mut slot = state.mcp_server.lock().await;
+
+    if let Some(existing) = slot.as_ref() {
+        return Ok(McpStatus {
+            running: true,
+            url: Some(existing.url()),
+            port: Some(existing.addr.port()),
+        });
+    }
+
+    let handle = mcp::start(
+        port,
+        state.log_store.clone(),
+        state.serial_connected.clone(),
+        state.file_watch_active.clone(),
+        app.clone(),
+    )
+    .await?;
+
+    let status = McpStatus {
+        running: true,
+        url: Some(handle.url()),
+        port: Some(handle.addr.port()),
+    };
+    let url = handle.url();
+    *slot = Some(handle);
+    // Released before emitting: emit_system_msg records into the log store, and
+    // holding this lock across it serves no purpose.
+    drop(slot);
+
+    emit_system_msg(app, format!("MCP server listening on {}", url)).await;
+    Ok(status)
+}
+
+#[tauri::command]
+async fn start_mcp_server(port: Option<u16>, app: tauri::AppHandle) -> Result<McpStatus, String> {
+    ensure_mcp_server(&app, port.unwrap_or(DEFAULT_MCP_PORT)).await
+}
+
+#[tauri::command]
+async fn stop_mcp_server(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<McpStatus, String> {
+    if let Some(handle) = state.mcp_server.lock().await.take() {
+        handle.stop();
+        emit_system_msg(&app, "MCP server stopped".to_string()).await;
+    }
+    Ok(McpStatus {
+        running: false,
+        url: None,
+        port: None,
+    })
+}
+
+#[tauri::command]
+async fn get_mcp_status(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
+    let slot = state.mcp_server.lock().await;
+    Ok(match slot.as_ref() {
+        Some(handle) => McpStatus {
+            running: true,
+            url: Some(handle.url()),
+            port: Some(handle.addr.port()),
+        },
+        None => McpStatus {
+            running: false,
+            url: None,
+            port: None,
+        },
+    })
+}
 fn create_config_dir(app: &mut tauri::App) {
     match fs::create_dir(app.path().app_config_dir().unwrap()) {
         Ok(_) => {}
@@ -861,6 +995,10 @@ fn create_config_dir(app: &mut tauri::App) {
         }
     };
 }
+/// Default MCP port. Picked to be memorable and outside the ephemeral range;
+/// the UI can request another one, and 0 asks the OS for any free port.
+const DEFAULT_MCP_PORT: u16 = 9339;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = AppState {
@@ -868,6 +1006,9 @@ pub fn run() {
         highlights: Arc::new(Mutex::new(Vec::new())),
         message_id_counter: Arc::new(AtomicU64::new(1)),
         file_watch_active: Arc::new(AtomicBool::new(false)),
+        log_store: Arc::new(LogStore::new()),
+        serial_connected: Arc::new(AtomicBool::new(false)),
+        mcp_server: Arc::new(Mutex::new(None)),
     };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -876,6 +1017,21 @@ pub fn run() {
     builder
         .setup(|app| {
             create_config_dir(app);
+
+            // `KAZESERIAL_MCP_PORT` starts the MCP server at launch, so an agent-driven
+            // session does not require clicking the toolbar button first. Use 0 to let
+            // the OS pick a free port; the chosen URL is printed into the log.
+            if let Some(port) = std::env::var("KAZESERIAL_MCP_PORT")
+                .ok()
+                .and_then(|value| value.parse::<u16>().ok())
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = ensure_mcp_server(&handle, port).await {
+                        println!("Failed to start MCP server on port {}: {}", port, err);
+                    }
+                });
+            }
             Ok(())
         })
         .manage(state)
@@ -887,7 +1043,10 @@ pub fn run() {
             add_logs_line,
             append_logs_line,
             watch_file,
-            stop_file_watch
+            stop_file_watch,
+            start_mcp_server,
+            stop_mcp_server,
+            get_mcp_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
