@@ -16,6 +16,7 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
@@ -69,6 +70,7 @@ export default function Home() {
   const [selectedMainLineId, setSelectedMainLineId] = useState<number | null>(null);
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
+  const [isFileWatching, setIsFileWatching] = useState(false);
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
   const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(null);
@@ -88,6 +90,18 @@ export default function Home() {
 
   const clearLogs = () => setLogs([]);
   const clearFocusLogs = () => setFocusLogs([]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'R') {
+        e.preventDefault();
+        clearLogs();
+        clearFocusLogs();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Click on a focus row: scroll the main terminal to the matching line and highlight it
   const onClickFocusLogs = (id: number) => {
@@ -141,12 +155,16 @@ export default function Home() {
     const unlisten_serial_datas_focus_append = listen<SerialMessage[]>('serial-datas-focus-append', (e) => {
       setFocusLogs(prev => [...prev, ...e.payload]);
     });
+    const unlisten_file_watch_stopped = listen('file-watch-stopped', () => {
+      setIsFileWatching(false);
+    });
     return () => {
       unlisten_serial_data.then(f => f());
       unlisten_serial_datas.then(f => f());
       unlisten_serial_datas_focus.then(f => f());
       unlisten_serial_datas_append.then(f => f());
       unlisten_serial_datas_focus_append.then(f => f());
+      unlisten_file_watch_stopped.then(f => f());
     };
   }, []);
 
@@ -320,6 +338,38 @@ export default function Home() {
                       <FolderOpenIcon fontSize="medium" />
                     </IconButton>
                     </Tooltip>
+                    <Tooltip title={isFileWatching ? 'Stop following file' : 'Follow file (tail -f)'} placement="top" arrow>
+                    <IconButton
+                      aria-label="follow file"
+                      aria-pressed={isFileWatching}
+                      size="medium"
+                      color="inherit"
+                      onClick={async () => {
+                        if (isFileWatching) {
+                          invoke<void>('stop_file_watch').catch((err: unknown) => console.error(err));
+                          setIsFileWatching(false);
+                        } else {
+                          const selected = await openDialog({ directory: false, multiple: false }).catch(() => undefined);
+                          if (selected) {
+                            invoke<void>('watch_file', { path: selected })
+                              .then(() => setIsFileWatching(true))
+                              .catch((err: unknown) => console.error(err));
+                          }
+                        }
+                      }}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: isFileWatching ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: isFileWatching ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <PlayCircleOutlineIcon fontSize="medium" />
+                    </IconButton>
+                    </Tooltip>
                     <Tooltip title="Save logs to file" placement="top" arrow>
                     <IconButton
                       aria-label="save logs to file"
@@ -346,7 +396,7 @@ export default function Home() {
                       <SaveIcon fontSize="medium" />
                     </IconButton>
                     </Tooltip>
-                  <Tooltip title="Clear logs" placement="top" arrow>
+                  <Tooltip title="Clear logs (Ctrl+Shift+R)" placement="top" arrow>
                   <IconButton
                     aria-label="clear logs"
                     size="medium"
@@ -500,7 +550,7 @@ export default function Home() {
                     <SaveIcon fontSize="medium" />
                   </IconButton>
                   </Tooltip>
-                  <Tooltip title="Clear focus logs" placement="top" arrow>
+                  <Tooltip title="Clear focus logs (Ctrl+Shift+R)" placement="top" arrow>
                   <IconButton
                     aria-label="clear focus logs"
                     size="medium"

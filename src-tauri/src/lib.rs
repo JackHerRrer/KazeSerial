@@ -4,7 +4,7 @@ use serialport::{SerialPort, SerialPortType};
 use std::collections::HashSet;
 use std::fs;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
@@ -122,6 +122,7 @@ struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     message_id_counter: Arc<AtomicU64>,
+    file_watch_active: Arc<AtomicBool>,
 }
 
 fn default_true() -> bool { true }
@@ -747,6 +748,111 @@ async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
     emit_system_msg(&app, "Connection closed".to_string()).await;
     Ok(())
 }
+
+#[tauri::command]
+async fn watch_file(
+    path: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // Signal any existing watcher to stop, then re-arm
+    state.file_watch_active.store(false, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    state.file_watch_active.store(true, Ordering::SeqCst);
+
+    // Read initial content and track byte position
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let initial_size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+
+    let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    // Emit initial batch (replaces current logs)
+    {
+        let highlights_vec = app.state::<AppState>().highlights.lock().await.clone();
+        let start_id = app
+            .state::<AppState>()
+            .message_id_counter
+            .fetch_add(lines.len() as u64, Ordering::SeqCst);
+        let results: Vec<Payload> = lines
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
+            .collect();
+        let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
+        let _ = app.emit("serial-datas", results);
+        let _ = app.emit("serial-datas-focus", focus);
+    }
+
+    let active = state.file_watch_active.clone();
+    let app_handle = app.clone();
+
+    tokio::spawn(async move {
+        let mut last_size = initial_size;
+
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+            if !active.load(Ordering::SeqCst) {
+                break;
+            }
+
+            let metadata = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => break,
+            };
+            let new_size = metadata.len();
+
+            if new_size > last_size {
+                use std::io::{BufRead, BufReader, Seek, SeekFrom};
+                if let Ok(mut file) = std::fs::File::open(&path) {
+                    if file.seek(SeekFrom::Start(last_size)).is_ok() {
+                        let reader = BufReader::new(file);
+                        let new_lines: Vec<String> =
+                            reader.lines().filter_map(|l| l.ok()).collect();
+
+                        if !new_lines.is_empty() {
+                            let highlights_vec = app_handle
+                                .state::<AppState>()
+                                .highlights
+                                .lock()
+                                .await
+                                .clone();
+                            let start_id = app_handle
+                                .state::<AppState>()
+                                .message_id_counter
+                                .fetch_add(new_lines.len() as u64, Ordering::SeqCst);
+                            let results: Vec<Payload> = new_lines
+                                .into_par_iter()
+                                .enumerate()
+                                .map(|(i, line)| {
+                                    process_line(line, &highlights_vec, start_id + i as u64)
+                                })
+                                .collect();
+                            let focus: Vec<Payload> =
+                                results.iter().filter(|p| p.matched).cloned().collect();
+                            let _ = app_handle.emit("serial-datas-append", results);
+                            let _ = app_handle.emit("serial-datas-focus-append", focus);
+                        }
+                    }
+                }
+                last_size = new_size;
+            } else if new_size < last_size {
+                // File truncated/rotated — restart from beginning
+                last_size = 0;
+            }
+        }
+
+        let _ = app_handle.emit("file-watch-stopped", ());
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_file_watch(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.file_watch_active.store(false, Ordering::SeqCst);
+    Ok(())
+}
 fn create_config_dir(app: &mut tauri::App) {
     match fs::create_dir(app.path().app_config_dir().unwrap()) {
         Ok(_) => {}
@@ -761,6 +867,7 @@ pub fn run() {
         serial_connection: Arc::new(Mutex::new(None)),
         highlights: Arc::new(Mutex::new(Vec::new())),
         message_id_counter: Arc::new(AtomicU64::new(1)),
+        file_watch_active: Arc::new(AtomicBool::new(false)),
     };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -778,7 +885,9 @@ pub fn run() {
             close_port,
             set_highlights,
             add_logs_line,
-            append_logs_line
+            append_logs_line,
+            watch_file,
+            stop_file_watch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
