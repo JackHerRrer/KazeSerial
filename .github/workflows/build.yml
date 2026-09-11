@@ -41,7 +41,8 @@ jobs:
             wget \
             file \
             libssl-dev \
-            libxdo-dev
+            libxdo-dev \
+            libudev-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
