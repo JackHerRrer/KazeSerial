@@ -47,6 +47,10 @@ Kaze Serial is a modern, high-performance serial terminal application built with
 - **Rust** (latest stable) & Cargo
 - System dependencies for Tauri (see [Tauri Prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites))
 
+   ```bash
+    sudo apt-get install libgtk-3-dev libglib2.0-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev libudev-dev
+   ```
+
 ### Installation
 
 1. Clone the repository:
