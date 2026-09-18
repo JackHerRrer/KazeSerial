@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio_util::sync::CancellationToken;
 
-use crate::log_store::{LogRecord, LogStore, SearchOptions};
+use crate::log_store::{LogRecord, LogStore, SearchOptions, build_matcher};
 
 /// Guardrail so a single call can never blow up the agent's context window.
 const HARD_MAX_LINES: usize = 20_000;
@@ -159,6 +159,20 @@ pub struct WaitOutput {
     pub last_id: u64,
 }
 
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct WaitForPatternOutput {
+    /// True when the pattern matched before the timeout.
+    pub matched: bool,
+    /// The matching line. Absent when the call timed out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<LogLine>,
+    /// Matches seen after `after_id`, including the returned one — 0 on timeout.
+    pub occurrences_seen: usize,
+    /// New cursor: the matched line's id, or the newest id scanned on timeout. Pass it
+    /// back as `after_id` to wait for the *next* occurrence.
+    pub last_id: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Input shapes
 // ---------------------------------------------------------------------------
@@ -255,6 +269,29 @@ pub struct WaitParams {
     /// Cap on returned lines. Default 500, hard max 20000.
     #[serde(default = "default_wait_max")]
     pub max_lines: usize,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct WaitForPatternParams {
+    /// Only consider lines with an id strictly greater than this. Use `newest_id`
+    /// from `get_status`, or `last_id` from a previous `wait_for_pattern` call to wait
+    /// for the next occurrence.
+    pub after_id: u64,
+    /// Text or regex to look for.
+    pub pattern: String,
+    /// Treat `pattern` as a Rust regex instead of a literal substring.
+    #[serde(default)]
+    pub is_regex: bool,
+    /// Case-insensitive matching. Default true.
+    #[serde(default = "default_ignore_case")]
+    pub ignore_case: bool,
+    /// Matches to skip before returning — e.g. 2 to ignore the pattern's first two
+    /// occurrences and catch the third. Default 0 (return on the first match).
+    #[serde(default)]
+    pub skip_occurrences: usize,
+    /// How long to block waiting for the pattern. Default 15000, max 120000.
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +483,43 @@ impl KazeMcp {
     }
 
     #[tool(
+        name = "wait_for_pattern",
+        description = "Block until a line matching pattern (substring or regex) with id > \
+                       after_id appears, or the timeout expires. Use this instead of a fixed \
+                       sleep when you launch a debug session and need to catch a specific log \
+                       line — e.g. a boot banner or an assert — without guessing how long that \
+                       takes. skip_occurrences lets you ignore the pattern's first N hits and \
+                       catch the next one, e.g. to skip past known startup noise. matched=false \
+                       means the timeout hit with no (further) match; call again with the \
+                       returned last_id as the new after_id to keep waiting."
+    )]
+    async fn wait_for_pattern(
+        &self,
+        Parameters(params): Parameters<WaitForPatternParams>,
+    ) -> Result<Json<WaitForPatternOutput>, ErrorData> {
+        let matcher = build_matcher(&params.pattern, params.is_regex, params.ignore_case)
+            .map_err(|e| ErrorData::invalid_params(format!("invalid regex: {}", e), None))?;
+        let timeout = Duration::from_millis(params.timeout_ms.min(MAX_WAIT_MS));
+
+        let result = self
+            .store
+            .wait_for_pattern(
+                params.after_id,
+                matcher.as_ref(),
+                params.skip_occurrences,
+                timeout,
+            )
+            .await;
+
+        Ok(Json(WaitForPatternOutput {
+            matched: result.matched,
+            line: result.line.map(LogLine::from),
+            occurrences_seen: result.occurrences_seen,
+            last_id: result.last_id,
+        }))
+    }
+
+    #[tool(
         name = "clear_logs",
         description = "Wipe the buffer in both the agent's view and the user's window, so a \
                        reproduction starts from a clean slate. Destructive: cleared lines are \
@@ -488,6 +562,12 @@ impl ServerHandler for KazeMcp {
                  important — high signal\n\
                  - wait_for_logs to follow the capture live: pass the last id you saw and it \
                  blocks until new lines arrive\n\
+                 - wait_for_pattern to block until a specific line shows up, instead of \
+                 sleeping a fixed duration before checking — e.g. waiting on a debug session's \
+                 boot banner. Call it directly once you know the pattern to watch for; there's no \
+                 need to search_logs first to see whether it already occurred — pass the current \
+                 newest_id as after_id and wait_for_pattern covers both cases (already present \
+                 among the newer lines, or arriving later)\n\
                  - get_all_logs only when you truly need everything; it paginates and a capture \
                  can be tens of thousands of lines\n\n\
                  Line text is always raw, with no highlight markup. Ids are stable within a \

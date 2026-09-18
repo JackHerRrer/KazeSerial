@@ -265,6 +265,69 @@ impl LogStore {
         }
     }
 
+    /// Blocks until the `skip_occurrences + 1`-th record matching `matcher` with
+    /// `id > after_id` appears, or `timeout` elapses. Unlike `wait_after`, a batch of
+    /// appends that doesn't reach the target occurrence count does not make the call
+    /// return early — it keeps waiting on the same deadline.
+    pub async fn wait_for_pattern(
+        &self,
+        after_id: u64,
+        matcher: &(dyn Fn(&str) -> bool + Sync),
+        skip_occurrences: usize,
+        timeout: Duration,
+    ) -> PatternWait {
+        let deadline = Instant::now() + timeout;
+        loop {
+            // Register interest before checking, so an append landing between the
+            // check and the wait cannot be missed.
+            let notified = self.notify.notified();
+
+            let inner = self.inner.read().await;
+            let mut occurrences_seen = 0usize;
+            let mut last_id = after_id;
+            let mut found: Option<LogRecord> = None;
+            for record in inner.records.iter().filter(|r| r.id > after_id) {
+                last_id = record.id;
+                if matcher(&record.text) {
+                    occurrences_seen += 1;
+                    if occurrences_seen > skip_occurrences {
+                        found = Some(record.clone());
+                        break;
+                    }
+                }
+            }
+            drop(inner);
+
+            if let Some(line) = found {
+                let last_id = line.id;
+                return PatternWait {
+                    matched: true,
+                    line: Some(line),
+                    occurrences_seen,
+                    last_id,
+                };
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return PatternWait {
+                    matched: false,
+                    line: None,
+                    occurrences_seen,
+                    last_id,
+                };
+            }
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return PatternWait {
+                    matched: false,
+                    line: None,
+                    occurrences_seen,
+                    last_id,
+                };
+            }
+        }
+    }
+
     /// Substring or regex search with optional surrounding context lines.
     /// Returns `(hit_blocks, total_hits)`; each block is a contiguous run of
     /// records covering one hit plus its context, with the hit ids listed.
@@ -280,22 +343,9 @@ impl LogStore {
             })
             .collect();
 
-        let matcher: Box<dyn Fn(&str) -> bool> = if opts.is_regex {
-            let pattern = if opts.ignore_case {
-                format!("(?i){}", opts.pattern)
-            } else {
-                opts.pattern.to_string()
-            };
-            match regex::Regex::new(&pattern) {
-                Ok(re) => Box::new(move |line: &str| re.is_match(line)),
-                Err(_) => return (Vec::new(), 0),
-            }
-        } else if opts.ignore_case {
-            let needle = opts.pattern.to_lowercase();
-            Box::new(move |line: &str| line.to_lowercase().contains(&needle))
-        } else {
-            let needle = opts.pattern.to_string();
-            Box::new(move |line: &str| line.contains(&needle))
+        let matcher = match build_matcher(opts.pattern, opts.is_regex, opts.ignore_case) {
+            Ok(matcher) => matcher,
+            Err(_) => return (Vec::new(), 0),
         };
 
         let hit_positions: Vec<usize> = candidates
@@ -343,6 +393,44 @@ pub struct SearchOptions<'a> {
 pub struct SearchHit {
     pub hit_id: u64,
     pub lines: Vec<LogRecord>,
+}
+
+/// Result of [`LogStore::wait_for_pattern`].
+pub struct PatternWait {
+    pub matched: bool,
+    /// The matching record, present only when `matched` is true.
+    pub line: Option<LogRecord>,
+    /// Matches seen after `after_id`, including the returned one.
+    pub occurrences_seen: usize,
+    /// Highest id scanned — the matched line's id, or the newest id seen before timeout.
+    pub last_id: u64,
+}
+
+/// A compiled line matcher, as produced by [`build_matcher`].
+pub type LineMatcher = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Builds a substring or regex line matcher, shared by `search` and `wait_for_pattern`
+/// so the two never drift on what "matches" means.
+pub fn build_matcher(
+    pattern: &str,
+    is_regex: bool,
+    ignore_case: bool,
+) -> Result<LineMatcher, regex::Error> {
+    if is_regex {
+        let pattern = if ignore_case {
+            format!("(?i){}", pattern)
+        } else {
+            pattern.to_string()
+        };
+        let re = regex::Regex::new(&pattern)?;
+        Ok(Box::new(move |line: &str| re.is_match(line)))
+    } else if ignore_case {
+        let needle = pattern.to_lowercase();
+        Ok(Box::new(move |line: &str| line.to_lowercase().contains(&needle)))
+    } else {
+        let needle = pattern.to_string();
+        Ok(Box::new(move |line: &str| line.contains(&needle)))
+    }
 }
 
 #[cfg(test)]
@@ -596,6 +684,73 @@ mod tests {
 
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].text, "arrived later");
+    }
+
+    #[tokio::test]
+    async fn wait_for_pattern_returns_immediately_when_the_match_is_already_there() {
+        let store = store_with(&[(1, "a"), (2, "needle"), (3, "c")]).await;
+        let matcher = build_matcher("needle", false, true).unwrap();
+
+        let got = store
+            .wait_for_pattern(0, matcher.as_ref(), 0, Duration::from_millis(50))
+            .await;
+
+        assert!(got.matched);
+        assert_eq!(got.line.unwrap().id, 2);
+        assert_eq!(got.occurrences_seen, 1);
+        assert_eq!(got.last_id, 2);
+    }
+
+    #[tokio::test]
+    async fn wait_for_pattern_skips_the_requested_occurrences() {
+        let store = store_with(&[(1, "needle"), (2, "needle"), (3, "needle")]).await;
+        let matcher = build_matcher("needle", false, true).unwrap();
+
+        let got = store
+            .wait_for_pattern(0, matcher.as_ref(), 2, Duration::from_millis(50))
+            .await;
+
+        assert!(got.matched, "the third occurrence should still land inside the timeout");
+        assert_eq!(got.line.unwrap().id, 3);
+        assert_eq!(got.occurrences_seen, 3);
+    }
+
+    #[tokio::test]
+    async fn wait_for_pattern_times_out_when_not_enough_occurrences_arrive() {
+        let store = store_with(&[(1, "needle")]).await;
+        let matcher = build_matcher("needle", false, true).unwrap();
+
+        let got = store
+            .wait_for_pattern(0, matcher.as_ref(), 1, Duration::from_millis(30))
+            .await;
+
+        assert!(!got.matched);
+        assert_eq!(got.occurrences_seen, 1, "the single match was seen but not returned");
+        assert_eq!(got.last_id, 1);
+    }
+
+    #[tokio::test]
+    async fn wait_for_pattern_wakes_on_a_later_matching_append() {
+        let store = Arc::new(store_with(&[(1, "a")]).await);
+
+        let writer = {
+            let store = store.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                store.append(vec![record(2, "noise")]).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                store.append(vec![record(3, "needle")]).await;
+            })
+        };
+
+        let matcher = build_matcher("needle", false, true).unwrap();
+        let got = store
+            .wait_for_pattern(1, matcher.as_ref(), 0, Duration::from_secs(5))
+            .await;
+        writer.await.unwrap();
+
+        assert!(got.matched);
+        assert_eq!(got.line.unwrap().id, 3);
     }
 
     #[tokio::test]
