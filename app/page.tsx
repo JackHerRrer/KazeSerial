@@ -26,7 +26,8 @@ import Tooltip from '@mui/material/Tooltip';
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
-import SerialTerminal from './components/SerialTerminal';
+import SerialTerminal, { type LineNumbers } from './components/SerialTerminal';
+import { useAppConfig } from './hooks/useAppConfig';
 import { SerialMessage } from './types/SerialMessage';
 
 // Shared timestamp for demo log generation — reset on each regenerate call
@@ -45,6 +46,20 @@ const darkTheme = createTheme({
 });
 
 /** Generates synthetic UART-style log lines for demo purposes */
+// Ids increase along the log, so a line is found by binary search. Falls back to a linear
+// search in case lines from concurrent sources were appended out of id order.
+const findLogIndex = (lines: SerialMessage[], id: number): number => {
+  let low = 0;
+  let high = lines.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (lines[middle].id === id) return middle;
+    if (lines[middle].id < id) low = middle + 1;
+    else high = middle - 1;
+  }
+  return lines.findIndex(line => line.id === id);
+};
+
 const generateDemoLogs = (count: number): string[] => {
   const result: string[] = [];
   for (let i = 0; i < count; i++) {
@@ -72,6 +87,7 @@ export default function Home() {
   const ignoreMainScrollUntilRef = useRef(0);
   const ignoreFocusScrollUntilRef = useRef(0);
 
+  const [config, updateConfig] = useAppConfig();
   const [logs, setLogs] = useState<SerialMessage[]>([]);
   const [focusLogs, setFocusLogs] = useState<SerialMessage[]>([]);
   const [selectedMainLineId, setSelectedMainLineId] = useState<number | null>(null);
@@ -125,6 +141,22 @@ export default function Home() {
       setSelectedMainLineId(prev => prev === id ? null : id);
     }
   };
+
+  // Line numbers are positions in the main log; a focus line shows the number of the same
+  // line in the main log. The gutter width follows the largest number.
+  const lineNumberDigits = String(logs.length).length;
+  const mainLineNumbers: LineNumbers | undefined = config.showLineNumbers
+    ? { numberOf: (index) => index + 1, digits: lineNumberDigits }
+    : undefined;
+  const focusLineNumbers: LineNumbers | undefined = config.showLineNumbers
+    ? {
+      numberOf: (index) => {
+        const mainIndex = findLogIndex(logs, focusLogs[index].id);
+        return mainIndex < 0 ? undefined : mainIndex + 1;
+      },
+      digits: lineNumberDigits,
+    }
+    : undefined;
 
   // Re-apply current highlight rules to all existing raw lines
   const onClickRefreshAll = () => {
@@ -475,6 +507,7 @@ export default function Home() {
                     onScroll={handleScroll(isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
                     selectedLineId={selectedMainLineId}
                     onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
+                    lineNumbers={mainLineNumbers}
                   />
                 </Box>
               </Resizable>
@@ -601,6 +634,7 @@ export default function Home() {
                   listRef={listRefFocus}
                   onScroll={handleScroll(isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
                   onClickRow={onClickFocusLogs}
+                  lineNumbers={focusLineNumbers}
                 />
               </Box>
               )}
@@ -619,7 +653,7 @@ export default function Home() {
           >
             {/* ControlPanel: always mounted, hidden when panel is collapsed */}
             <Box sx={{ flex: 1, overflow: 'hidden', display: isSettingsPanelOpen ? 'flex' : 'none', flexDirection: 'column' }}>
-              <ControlPanel />
+              <ControlPanel config={config} onConfigChange={updateConfig} />
             </Box>
             {/* Collapsed strip: vertical "Settings" label */}
             {!isSettingsPanelOpen && (

@@ -83,6 +83,15 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 - Each row is 20px tall; rows with `removed_line = true` have height 0 (invisible)
 - Log text is rendered as HTML via `dangerouslySetInnerHTML` to support `<span style="color:...">` highlight markup. The backend escapes the log text, so only its own `<span>` tags are interpreted (see [Highlight processing pipeline](#highlight-processing-pipeline-parse_log_line))
 - Font: monospace, 0.875rem, color `#d4d4d4`, background `#1e1e1e`
+- Rows are as wide as their content (`width: max-content`, at least the terminal width), so the sticky line number gutter stays visible on long lines
+
+### Line numbers
+Enabled by the **Show line numbers** setting of the [Config tab](#config-tab). Like in a code editor, a gutter on the left of each row shows its line number.
+
+- **Main terminal**: the position of the line in the main log, starting at 1. Lines hidden by a `remove` + `whole_line` rule are counted, so the numbering skips them and a number always designates the same line whatever the rules. It restarts at 1 when the log is cleared or replaced by a file load; Refresh keeps the same numbers.
+- **Focus terminal**: the number of the same line in the main log, found by id (binary search, since ids increase along the log, with a linear search as fallback). Empty when that line is no longer in the main log.
+- **Rendering**: the number is CSS generated content (`::before { content: attr(data-line-number) }`), so it is neither selectable nor part of copied text, and Save never includes it. The gutter is right-aligned, gray (`#545a62`), as wide as the largest number of the main log plus 2 characters, and `position: sticky` on the left with an opaque background so text scrolled horizontally passes under it. It follows the selected row highlight.
+- The terminal receives it through an optional `lineNumbers` prop (`{ numberOf(index), digits }`); without it, no gutter is rendered.
 
 ### Auto-scroll
 - When enabled, the list automatically scrolls to the last row when new logs arrive
@@ -149,7 +158,16 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | Tab | Content |
 |---|---|
 | **Highlight** (default) | The `HighLighSettings` rules table, see [Highlight Settings Component](#highlight-settings-component) |
-| **Config** | Empty, reserved for future settings |
+| **Config** | Application settings, see below |
+
+#### Config tab
+`ConfigSettings` component, a list of application settings:
+
+| Setting | Default | Effect |
+|---|---|---|
+| **Show line numbers** (checkbox) | off | Shows a [line number gutter](#line-numbers) in the main and focus terminals |
+
+Settings are held in `page.tsx` through the `useAppConfig` hook, and saved to `app_config.json` in `BaseDirectory.AppConfig` on every change. On mount, the file is read and merged over the defaults (`DEFAULT_APP_CONFIG`), so settings added later get their default value; a missing file keeps the defaults.
 
 ### Tab behavior
 - **Inactive tabs stay mounted**: they are only hidden, so switching tabs keeps their internal state (open serial connection, loaded highlight rules).
@@ -495,8 +513,12 @@ app/
     SerialSettings.tsx       — Serial port configuration
     FileSettings.tsx         — File follow configuration (File tab)
     HighLighSettings.tsx     — Highlight/filter rules table
+    ConfigSettings.tsx       — Application settings (Config tab)
+  hooks/
+    useAppConfig.ts          — Loads and saves the application settings
   types/
     SerialMessage.tsx        — SerialMessage type definition
+    AppConfig.tsx            — Application settings type and defaults
 src-tauri/
   src/
     lib.rs                   — All Rust backend logic
@@ -517,7 +539,7 @@ src-tauri/
 - **Virtualized rendering**: `react-window` is used to handle tens of thousands of log lines without DOM performance issues. Row heights are computed per-row (0 for removed lines).
 - **Highlight rule ordering**: Rules are applied sequentially; a later rule overrides earlier colors, and the first matching `remove=whole_line` rule terminates processing for that line.
 - **Auto-scroll**: Each panel independently tracks whether auto-scroll is enabled. A timestamp-based ref suppresses false negatives when programmatically scrolling.
-- **Persistence**: Highlight rules are saved to JSON on every change and restored on startup. The frontend owns the canonical rule state and pushes it to the backend.
+- **Persistence**: Highlight rules (`highlight_settings.json`) and application settings (`app_config.json`) are saved to JSON on every change and restored on startup. The frontend owns the canonical rule state and pushes it to the backend.
 - **Resizable panels**: The vertical split (main/focus) is user-resizable via `re-resizable`. The horizontal split is achieved by making the terminals pane `flex: 1` and the settings pane a `re-resizable` component that resizes from its left edge. This avoids the issue where `re-resizable` injects `width` as an inline style, which would override any CSS flex behavior if the resizable element itself were the flex child.
 
 ---

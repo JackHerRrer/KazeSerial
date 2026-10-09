@@ -7,6 +7,8 @@ import Tab from '@mui/material/Tab';
 import SerialSettings from './SerialSettings';
 import FileSettings from './FileSettings';
 import HighLighSettings from './HighLighSettings';
+import ConfigSettings from './ConfigSettings';
+import { AppConfig } from '../types/AppConfig';
 
 type SourceTab = 'serial' | 'file';
 type BottomTab = 'highlight' | 'config';
@@ -28,7 +30,12 @@ const SourcePanel: React.FC<{ active: boolean; children?: React.ReactNode }> = (
   </Box>
 );
 
-const ControlPanel: React.FC = () => {
+interface ControlPanelProps {
+  config: AppConfig;
+  onConfigChange: (changes: Partial<AppConfig>) => void;
+}
+
+const ControlPanel: React.FC<ControlPanelProps> = ({ config, onConfigChange }) => {
   const [sourceTab, setSourceTab] = useState<SourceTab>('serial');
   const [bottomTab, setBottomTab] = useState<BottomTab>('highlight');
 
@@ -67,7 +74,9 @@ const ControlPanel: React.FC = () => {
         <TabPanel active={bottomTab === 'highlight'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>
           <HighLighSettings />
         </TabPanel>
-        <TabPanel active={bottomTab === 'config'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }} />
+        <TabPanel active={bottomTab === 'config'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>
+          <ConfigSettings config={config} onConfigChange={onConfigChange} />
+        </TabPanel>
       </Box>
     </Box>
   );

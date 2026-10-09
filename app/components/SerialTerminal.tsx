@@ -6,6 +6,12 @@ import Box from '@mui/material/Box';
 import RowComponent from './SerialTerminalLine';
 import { SerialMessage } from '../types/SerialMessage';
 
+/** Line number gutter: number shown for each row, and digit count of the widest number */
+export type LineNumbers = {
+  numberOf: (index: number) => number | undefined;
+  digits: number;
+};
+
 interface SerialTerminalProps {
   serial_messages: SerialMessage[];
   height?: number | string;
@@ -14,6 +20,7 @@ interface SerialTerminalProps {
   onScroll: UIEventHandler<HTMLDivElement>;
   onClickRow?: (message_id: number) => void;
   selectedLineId?: number | null;
+  lineNumbers?: LineNumbers;
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
@@ -24,6 +31,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   onScroll,
   onClickRow,
   selectedLineId: externalSelectedLineId,
+  lineNumbers,
 }) => {
   const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
 
@@ -84,7 +92,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
             return line?.removed_line ? 0 : 20;
           }}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId }}
+          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers }}
           overscanCount={10}
           listRef={listRef}
           onScroll={onScroll}
