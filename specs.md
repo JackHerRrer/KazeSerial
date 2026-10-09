@@ -2,7 +2,7 @@
 
 ## Overview
 
-KazeSerial is a desktop serial terminal application built with **Tauri v2** (Rust backend) and **Next.js / React** (frontend), using **Material UI (MUI)** as the component library. It allows users to monitor serial port output, apply color highlight/filter rules, and export logs.
+KazeSerial is a desktop serial terminal application built with **Tauri v2** (Rust backend) and **Next.js / React** (frontend), using **Material UI (MUI)** as the component library. It allows users to monitor serial port output or follow a log file, apply color highlight/filter rules, export logs, and expose the log buffer to an AI agent through an embedded MCP server.
 
 The app uses a **dark theme** throughout.
 
@@ -39,6 +39,7 @@ A vertical flex column containing:
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
      - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
      - **Open** (folder icon) — opens a file picker, loads a log file into the main terminal
+     - **MCP** (robot icon) — starts or stops the [MCP server](#mcp-server). Highlighted in green (`rgba(76,175,80,0.28)`) while running; the tooltip then shows the server URL. The state is read with `get_mcp_status` on mount, since the server survives webview reloads
      - **Save** (save icon) — saves the main log to a `.log` file
      - **Delete** (delete icon) — clears the main log
      - **More** (three-dot icon, rightmost) — dropdown menu with demo utilities:
@@ -280,6 +281,10 @@ struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     message_id_counter: Arc<AtomicU64>,
+    file_watch_active: Arc<AtomicBool>,
+    log_store: Arc<LogStore>,          // copy of every emitted line, served by MCP
+    serial_connected: Arc<AtomicBool>, // lock-free mirror of serial_connection.is_some()
+    mcp_server: Arc<Mutex<Option<McpServerHandle>>>,
 }
 ```
 
@@ -308,6 +313,15 @@ Stops any running file follow, reads the file, replaces the logs with its lines,
 
 #### `stop_file_watch()`
 Asks the follow loop to stop. It exits within 200 ms and emits `file-watch-stopped`.
+
+#### `start_mcp_server(port?) -> McpStatus`
+Starts the [MCP server](#mcp-server) on `127.0.0.1:port` (default `9339`; `0` lets the OS pick a free port). Does nothing if it is already running. Emits the system message `MCP server listening on {url}`.
+
+#### `stop_mcp_server() -> McpStatus`
+Stops the MCP server and its sessions. Emits the system message `MCP server stopped`.
+
+#### `get_mcp_status() -> McpStatus`
+Returns `{ running, url, port }`.
 
 #### `add_logs_line(lines: Vec<String>)`
 Processes a batch of raw lines through `parse_log_line` and emits:
@@ -387,7 +401,7 @@ Otherwise:
 
 ### System Messages
 
-Certain backend events (connection lifecycle) are surfaced as regular log lines in the main terminal, rendered in the same monospace font as serial data. They are not processed through highlight rules and always have `matched: false` and `removed_line: false`.
+Certain backend events (connection and MCP server lifecycle) are surfaced as regular log lines in the main terminal, rendered in the same monospace font as serial data. They are processed through the current highlight rules like any other line, so they can be colored, sent to the focus panel or removed.
 
 Format: `[HH:MM:SS] KazeSerial: {message}` where the timestamp is UTC wall-clock time.
 
@@ -397,8 +411,56 @@ Format: `[HH:MM:SS] KazeSerial: {message}` where the timestamp is UTC wall-clock
 | Port open failed | `Connection failed: {error}` |
 | Read loop I/O error | `Connection to {port} lost` |
 | Port closed by user | `Connection closed` |
+| MCP server started | `MCP server listening on {url}` |
+| MCP server stopped | `MCP server stopped` |
 
-Implemented via `emit_system_msg(app, msg)` which allocates a message ID from the shared counter and emits a `serial-data` event.
+Implemented via `emit_system_msg(app, msg)` which allocates a message ID from the shared counter, processes the line with `process_line`, records it in the log store and emits a `serial-data` event.
+
+---
+
+## Log Store
+
+`LogStore` (`log_store.rs`) keeps a backend copy of the log, so the MCP server can serve the same lines the user sees. Every emit site also records into it:
+
+| Frontend event | Store operation |
+|---|---|
+| `serial-data`, `serial-datas-append` | append |
+| `serial-datas` | replace the whole buffer |
+| MCP `clear_logs` (then `logs-cleared`) | clear |
+
+The window's Clear button only empties the frontend lists: the store, and therefore MCP, keeps the cleared lines.
+
+- Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), and its `focus` / `removed` flags.
+- It is a ring buffer: past the capacity (default **500 000** lines, `KAZESERIAL_LOG_CAPACITY` to override), the oldest lines are evicted and counted as dropped.
+- It tracks the current source: `none`, `serial`, `file` (loaded once) or `file_watch` (followed).
+- Appends wake up waiting MCP calls, so `wait_for_logs` and `wait_for_pattern` block instead of polling.
+
+---
+
+## MCP Server
+
+Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) giving an AI agent read access to the [log store](#log-store) while the user keeps using the window. User-facing setup is described in the README.
+
+- **Transport**: Streamable HTTP at `http://127.0.0.1:{port}/mcp`, served inside the Tauri process. Bound to loopback only; the `Host` header is checked against loopback names against DNS rebinding.
+- **Lifecycle**: off by default. Started and stopped from the toolbar MCP button, or at launch when `KAZESERIAL_MCP_PORT` is set (`0` picks a free port, printed in the log).
+- **Scope**: read-only apart from `clear_logs`. Nothing can touch the serial port or the files.
+- **Limits**: a call returns at most **20 000** lines; a wait blocks at most **120 s**.
+
+### Tools
+
+| Tool | Returns |
+|---|---|
+| `get_status` | Source, serial / file follow state, line and focus counts, oldest and newest ids, dropped lines, capacity. Meant as the first call: its ids are the cursors the other tools take |
+| `tail_logs(count=100)` | The last lines, oldest first |
+| `get_logs_range(from_id, to_id, max_lines=2000)` | Lines between two ids, inclusive |
+| `get_all_logs(offset=0, max_lines=2000)` | The whole buffer, paginated with `next_offset` |
+| `get_focus_logs(count=100)` | The last focus lines |
+| `search_logs(pattern, is_regex=false, ignore_case=true, limit=100, context_before, context_after, from_id, to_id)` | Matching lines with optional context lines (at most 500 each side) |
+| `wait_for_logs(after_id, timeout_ms=15000, max_lines=500)` | Blocks until lines with `id > after_id` arrive; returns them with the new `last_id` |
+| `wait_for_pattern(after_id, pattern, is_regex=false, ignore_case=true, skip_occurrences=0, timeout_ms=15000)` | Blocks until a line with `id > after_id` matches, after skipping `skip_occurrences` matches; returns it with the new `last_id` |
+| `clear_logs` | Clears the store and emits `logs-cleared` so the window is cleared too |
+
+Line ids are stable within a session and never reused.
 
 ---
 
@@ -412,6 +474,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 | `serial-datas-append` | `SerialMessage[]` | Batch of new lines to append to the log |
 | `serial-datas-focus-append` | `SerialMessage[]` | Batch of new focus-matched lines to append |
 | `file-watch-stopped` | *(empty)* | Emitted when the file follow loop exits (user stop or missing file). The frontend resets the Follow button. |
+| `logs-cleared` | *(empty)* | Emitted when an MCP client calls `clear_logs`. The frontend clears the main and focus logs so the window stays in sync. |
 | `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged). The frontend listens to this event to reset the Connect button to its disconnected state. |
 
 ---
@@ -436,6 +499,8 @@ src-tauri/
   src/
     lib.rs                   — All Rust backend logic
     tail_splitter.rs         — Line splitting and UTF-8 decoding for file follow
+    log_store.rs             — Backend copy of the log served by MCP
+    mcp.rs                   — Embedded MCP server and its tools
     main.rs                  — Tauri entry point
   tauri.conf.json
   Cargo.toml
