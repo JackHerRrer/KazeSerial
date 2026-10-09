@@ -62,7 +62,7 @@ A circular toggle button (36×36px, MUI `IconButton`) straddles the top border o
 When the focus panel is closed, the Main Terminal wrapper takes `flex: 1` to fill all available space above the "focus" label. When open, the wrapper uses `display: contents` so it is transparent to the flex layout and the Resizable component behaves as a direct child of the Container.
 
 ### Settings pane (right, collapsible)
-A **Control Panel** showing serial port configuration at the top and the highlight rules table below. It is resizable from its **left edge** via `re-resizable` (default width ~30%, min 220px, max 70%) and can be collapsed to a thin strip.
+A **Control Panel** made of two tabbed areas: the **source tabs** at the top (data source selection) and the **settings tabs** below (highlight rules and configuration). See [Control Panel](#control-panel) for details. It is resizable from its **left edge** via `re-resizable` (default width ~30%, min 220px, max 70%) and can be collapsed to a thin strip.
 
 #### Settings panel collapse button
 A circular toggle button (36×36px) is positioned absolutely on the **right border** of the terminals pane (`right: -18px`, `top: 50%`), straddling the boundary between the two panes. It uses:
@@ -118,16 +118,34 @@ type SerialMessage = {
 
 ## Control Panel
 
-A panel on the right side with two sections (no tabs):
+A panel on the right side split into two areas, each with its own row of full-width tabs (MUI `Tabs`).
 
-### Serial configuration (top)
+### Source tabs (top)
+Select the data source. Only the serial source is implemented for now.
+
+| Tab | Content |
+|---|---|
+| **Serial** (default) | Serial port configuration, see below |
+| **File** | Empty, reserved for a future file source |
+
+#### Serial tab
 Serial port configuration:
 - **Port selector** — dropdown listing available ports with auto-detection on mount. Each entry shows `portName - deviceLabel` (manufacturer + product name for USB, or generic label). A refresh button re-lists ports.
 - **Baud rate selector** — dropdown with values: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600. Default: 115200.
 - **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly.
 
-### Highlight rules (bottom, scrollable)
-The `HighLighSettings` table occupies the remaining height of the panel with vertical scrolling.
+### Settings tabs (bottom, scrollable)
+Occupy the remaining height of the panel. The content of the active tab scrolls vertically.
+
+| Tab | Content |
+|---|---|
+| **Highlight** (default) | The `HighLighSettings` rules table, see [Highlight Settings Component](#highlight-settings-component) |
+| **Config** | Empty, reserved for future settings |
+
+### Tab behavior
+- **Inactive tabs stay mounted**: they are only hidden, so switching tabs keeps their internal state (open serial connection, loaded highlight rules).
+- **Stable source area height**: the source tab panels are stacked in the same CSS grid cell, and only the active one is visible (`visibility: hidden` on the others). The source area always takes the height of its tallest tab, so the settings area does not move when switching source tabs, even to an empty one.
+- **Settings tabs** use `display: none` for inactive panels, since the settings area fills the remaining height anyway.
 
 ---
 
@@ -374,7 +392,7 @@ app/
   components/
     SerialTerminal.tsx       — Virtualized log viewer
     SerialTerminalLine.tsx   — Individual row renderer
-    ControlPanel.tsx         — Serial config + highlight rules panel
+    ControlPanel.tsx         — Tabbed source + settings panel
     SerialSettings.tsx       — Serial port configuration
     HighLighSettings.tsx     — Highlight/filter rules table
   types/
