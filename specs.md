@@ -41,7 +41,7 @@ A vertical flex column containing:
      - **Open** (folder icon) — opens a file picker, loads a log file into the main terminal
      - **MCP** (robot icon) — starts or stops the [MCP server](#mcp-server). Highlighted in green (`rgba(76,175,80,0.28)`) while running; the tooltip then shows the server URL. The state is read with `get_mcp_status` on mount, since the server survives webview reloads
      - **Save** (save icon) — saves the main log to a `.log` file
-     - **Delete** (delete icon) — clears the main log
+     - **Delete** (delete icon) — clears the main log and the backend [log store](#log-store), so MCP clients see the same log. Ctrl+Shift+R also clears the focus log
      - **More** (three-dot icon, rightmost) — dropdown menu with demo utilities:
        - *Demo - Append 10k logs*
        - *Demo - Regenerate logs*
@@ -308,6 +308,9 @@ Drops the serial port connection. Emits a system message: `[HH:MM:SS] KazeSerial
 #### `set_highlights(highlights: Vec<HighlightMessage>)`
 Compiles and stores highlight rules. Validates regexes (invalid rules are skipped). Converts the `advanced_selections` field into `AdvancedSelectionSetting` structs (parsing comma-separated group numbers).
 
+#### `clear_logs()`
+Clears the [log store](#log-store). Called when the user clears the main log (Clear button or Ctrl+Shift+R). Unlike the MCP `clear_logs` tool, it does not emit `logs-cleared`, so the focus panel is left as the user chose.
+
 #### `watch_file(path)`
 Stops any running file follow, reads the file, replaces the logs with its lines, then spawns the follow loop described in [File Follow](#file-follow-tail--f). Returns an error if the file cannot be read.
 
@@ -426,9 +429,8 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 |---|---|
 | `serial-data`, `serial-datas-append` | append |
 | `serial-datas` | replace the whole buffer |
-| MCP `clear_logs` (then `logs-cleared`) | clear |
-
-The window's Clear button only empties the frontend lists: the store, and therefore MCP, keeps the cleared lines.
+| Clear button / Ctrl+Shift+R (`clear_logs` command) | clear |
+| MCP `clear_logs` tool (then `logs-cleared`) | clear |
 
 - Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), and its `focus` / `removed` flags.
 - It is a ring buffer: past the capacity (default **500 000** lines, `KAZESERIAL_LOG_CAPACITY` to override), the oldest lines are evicted and counted as dropped.

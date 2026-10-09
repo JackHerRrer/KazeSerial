@@ -778,6 +778,15 @@ async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
     Ok(())
 }
 
+/// Clears the log store when the user clears the main log, so MCP clients see the same log.
+/// Unlike the MCP `clear_logs` tool, it does not emit `logs-cleared`: the window already
+/// cleared what the user asked for.
+#[tauri::command]
+async fn clear_logs(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.log_store.clear().await;
+    Ok(())
+}
+
 #[tauri::command]
 async fn watch_file(
     path: String,
@@ -1004,6 +1013,7 @@ pub fn run() {
             set_highlights,
             add_logs_line,
             append_logs_line,
+            clear_logs,
             watch_file,
             stop_file_watch,
             start_mcp_server,

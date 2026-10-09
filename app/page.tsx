@@ -98,12 +98,19 @@ export default function Home() {
   const clearLogs = () => setLogs([]);
   const clearFocusLogs = () => setFocusLogs([]);
 
+  // User clear: also empties the backend log store, so MCP clients see the same log
+  const onClearLogs = () => {
+    clearLogs();
+    invoke<void>('clear_logs').catch((err: unknown) => console.error(err));
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'R') {
         e.preventDefault();
-        clearLogs();
-        clearFocusLogs();
+        setLogs([]);
+        setFocusLogs([]);
+        invoke<void>('clear_logs').catch((err: unknown) => console.error(err));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -420,7 +427,7 @@ export default function Home() {
                     aria-label="clear logs"
                     size="medium"
                     color="inherit"
-                    onClick={clearLogs}
+                    onClick={onClearLogs}
                     sx={{
                       width: 36,
                       height: 36,
