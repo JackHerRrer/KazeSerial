@@ -43,8 +43,8 @@ Kaze Serial is a modern, high-performance serial terminal application built with
 
 ### Prerequisites
 
-- **Node.js** (v18+ recommended)
-- **Rust** (latest stable) & Cargo
+- **Node.js** (v18+ recommended): [Download node.js](https://nodejs.org/en/download)
+- **Rust** (latest stable) & Cargo: [Dowload rust](https://rust-lang.org//tools/install/)
 - System dependencies for Tauri (see [Tauri Prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites))
 
    ```bash
