@@ -80,7 +80,7 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 ### Behavior
 - Uses a virtualized list (`react-window`) for performance with large log counts
 - Each row is 20px tall; rows with `removed_line = true` have height 0 (invisible)
-- Log text is rendered as raw HTML via `dangerouslySetInnerHTML` to support `<span style="color:...">` highlight markup
+- Log text is rendered as HTML via `dangerouslySetInnerHTML` to support `<span style="color:...">` highlight markup. The backend escapes the log text, so only its own `<span>` tags are interpreted (see [Highlight processing pipeline](#highlight-processing-pipeline-parse_log_line))
 - Font: monospace, 0.875rem, color `#d4d4d4`, background `#1e1e1e`
 
 ### Auto-scroll
@@ -107,9 +107,9 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 ```typescript
 type SerialMessage = {
   id: number;           // unique monotonically increasing ID
-  message: string;      // HTML string (may contain <span> tags)
+  message: string;      // escaped HTML string (may contain <span> tags)
   matched: boolean;     // true if matched a focus rule
-  rawline?: string;     // original unprocessed line (present if a rule matched)
+  rawline?: string;     // original unprocessed line (present if a rule matched or message differs from it)
   removed_line?: boolean; // true if the whole line was removed
 };
 ```
@@ -121,18 +121,26 @@ type SerialMessage = {
 A panel on the right side split into two areas, each with its own row of full-width tabs (MUI `Tabs`).
 
 ### Source tabs (top)
-Select the data source. Only the serial source is implemented for now.
+Select the data source.
 
 | Tab | Content |
 |---|---|
 | **Serial** (default) | Serial port configuration, see below |
-| **File** | Empty, reserved for a future file source |
+| **File** | File follow (`tail -f`), see below |
 
 #### Serial tab
 Serial port configuration:
 - **Port selector** — dropdown listing available ports with auto-detection on mount. Each entry shows `portName - deviceLabel` (manufacturer + product name for USB, or generic label). A refresh button re-lists ports.
 - **Baud rate selector** — dropdown with values: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600. Default: 115200.
 - **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly.
+
+#### File tab
+`FileSettings` component, a single row:
+- **Select button** (folder icon) — opens a file picker and shows the chosen path in the field. It does not start following.
+- **File field** — read-only, shows the chosen path, truncated with an ellipsis; the full path is shown on hover.
+- **Follow / Stop button** — calls `watch_file` with the chosen path, or `stop_file_watch`. The button state (`isFileWatching`) is set to `true` only in the `.then()` callback of `watch_file`, and to `false` on Stop or upon receiving a `file-watch-stopped` event.
+
+While following, the select button and the file field are disabled. Follow is disabled until a file is chosen. See [File Follow](#file-follow-tail--f) for the backend behavior.
 
 ### Settings tabs (bottom, scrollable)
 Occupy the remaining height of the panel. The content of the active tab scrolls vertically.
@@ -146,6 +154,23 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 - **Inactive tabs stay mounted**: they are only hidden, so switching tabs keeps their internal state (open serial connection, loaded highlight rules).
 - **Stable source area height**: the source tab panels are stacked in the same CSS grid cell, and only the active one is visible (`visibility: hidden` on the others). The source area always takes the height of its tallest tab, so the settings area does not move when switching source tabs, even to an empty one.
 - **Settings tabs** use `display: none` for inactive panels, since the settings area fills the remaining height anyway.
+
+---
+
+## File Follow (tail -f)
+
+Follows a file as it grows, like `tail -f`. Started from the [File tab](#file-tab).
+
+- **Start**: the whole file is read, processed through the highlight rules and **replaces** the main and focus logs (`serial-datas` / `serial-datas-focus`). The log store source becomes `file_watch`.
+- **Polling**: every **200 ms**, the file size is compared with the number of bytes already read:
+  - grown → the new bytes are read, processed and **appended** (`serial-datas-append` / `serial-datas-focus-append`);
+  - shrunk (truncation or rotation) → reading restarts from the beginning of the file, and the text waiting for a line terminator is dropped. The lines already displayed are kept;
+  - missing → following stops.
+- **Complete lines only**: a line is emitted only once terminated by `\n` (a trailing `\r` is stripped). The text after the last `\n` waits until a later read completes it. As a result, a line written in several steps is never split, appending `\nnew` to a file without a trailing newline adds no empty line, and the last line of a file without a trailing newline is not displayed.
+- **Encoding**: the file is decoded as UTF-8. A character cut between two reads is completed on the next one; invalid bytes are replaced with `U+FFFD`.
+- **Stop**: on user request or missing file, the loop exits, emits `file-watch-stopped` and resets the log store source to `file` if it still points to the followed file.
+
+Line splitting and decoding live in `tail_splitter.rs` (`TailSplitter`, `decode_utf8`).
 
 ---
 
@@ -278,6 +303,12 @@ Drops the serial port connection. Emits a system message: `[HH:MM:SS] KazeSerial
 #### `set_highlights(highlights: Vec<HighlightMessage>)`
 Compiles and stores highlight rules. Validates regexes (invalid rules are skipped). Converts the `advanced_selections` field into `AdvancedSelectionSetting` structs (parsing comma-separated group numbers).
 
+#### `watch_file(path)`
+Stops any running file follow, reads the file, replaces the logs with its lines, then spawns the follow loop described in [File Follow](#file-follow-tail--f). Returns an error if the file cannot be read.
+
+#### `stop_file_watch()`
+Asks the follow loop to stop. It exits within 200 ms and emits `file-watch-stopped`.
+
 #### `add_logs_line(lines: Vec<String>)`
 Processes a batch of raw lines through `parse_log_line` and emits:
 - `serial-datas` — all processed lines
@@ -285,33 +316,35 @@ Processes a batch of raw lines through `parse_log_line` and emits:
 
 ### Highlight processing pipeline (`parse_log_line`)
 
-Rules are applied in order. For each rule that matches:
+Implemented by `process_line`, which is pure so batches can run in parallel.
 
-1. **`remove = true` + `whole_line = true`**: clear the line, mark `removed_line = true`, stop processing.
-2. **`remove = true` + regex + `advanced`**: remove text at positions of all capture groups from all advanced selections.
-3. **`remove = true` + regex (no advanced)**: remove the matched substring (or specific groups if `custom_select` is set).
-4. **`remove = true` + plain text**: replace matched text with empty string.
-5. **`remove = false` + `whole_line = true`**: wrap entire line in `<span style="color:COLOR">`.
-6. **`remove = false` + regex + `advanced`**: wrap each capture group in its own colored span. Groups are sorted by start position; overlapping groups are skipped (first wins). If no groups are configured, fallback to coloring the whole match.
-7. **`remove = false` + regex (no advanced, custom groups)**: wrap specified capture groups in colored span; if no groups, color the whole match.
-8. **`remove = false` + regex (simple)**: replace match with `<span style="color:COLOR">$0</span>`.
-9. **`remove = false` + plain text + case sensitive**: replace text with `<span style="color:COLOR">text</span>`.
-10. **`remove = false` + plain text + case insensitive**: same, but matches regardless of case, preserving the original casing of the matched text in the output.
+**Raw text, one color per character.** Rules never see HTML. The line is kept as raw text with an optional color for each character, and rules are applied in order on that text:
 
-If `focus = true` and `remove = false`, the line is marked `matched = true`.
+| Rule | Effect |
+|---|---|
+| `remove` + `whole_line` | Clears the line, sets `removed_line = true` and **stops processing** |
+| `remove` + regex + custom (`advanced`) | Removes the selected capture groups of each match (union of all selections); the whole match when none of them matched |
+| `remove` (other) | Removes every match |
+| `whole_line` | Colors every character of the line |
+| regex + custom (`advanced`) | Colors each selected capture group with its selection color. Groups are sorted by (start, end); a group overlapping an already kept one is skipped. When no group matched, colors the whole match with the rule color |
+| other | Colors every match |
 
-The `case_sensitive` flag controls matching behavior:
-- For **regex** rules: when `false`, the pattern is prefixed with `(?i)` before compiling.
-- For **plain text** rules: when `false`, matching and replacement use `to_lowercase()` on both sides, with the original casing of the matched text preserved in the HTML output.
+- **Removal** deletes the characters with their colors. Later rules see the remaining text.
+- **Priority**: a rule overrides the colors set by earlier rules on the characters it colors. Whole-line rules follow the same priority: a later rule wins.
+- **Matching**: a rule applies when it matches the current text. Plain-text rules match their text literally (compiled as an escaped regex). Rules with an empty text are ignored.
+- **Case**: `case_sensitive = false` compiles the rule case-insensitively, for regex and plain-text rules alike. The original casing is kept in the output.
+- **Focus**: if a matching rule has `focus = true` and `remove = false`, the line is marked `matched = true`.
 
-The `rawline` field is set to the original unprocessed string whenever any rule matched (so the "refresh" feature can reprocess).
+**HTML output.** Once all rules are applied, `message` is built with one `<span style="color:COLOR;">` per run of same-colored characters. The log text and the color value are HTML-escaped (`&`, `<`, `>`, `"`), so log content is always displayed as is and never interpreted as markup.
+
+**`rawline`** is set to the original line whenever a rule matched or `message` differs from it (escaped characters). Refresh, Save and the log store read `rawline` when present and `message` otherwise, so they always get the raw text.
 
 ### Message payload (emitted to frontend)
 
 ```rust
 struct Payload {
     id: u64,
-    message: String,        // HTML string with <span> tags
+    message: String,        // escaped HTML string with <span> tags
     matched: bool,
     rawline: Option<String>,
     removed_line: bool,
@@ -378,6 +411,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 | `serial-datas-focus` | `SerialMessage[]` | Batch of focus-matched lines (replaces full focus log) |
 | `serial-datas-append` | `SerialMessage[]` | Batch of new lines to append to the log |
 | `serial-datas-focus-append` | `SerialMessage[]` | Batch of new focus-matched lines to append |
+| `file-watch-stopped` | *(empty)* | Emitted when the file follow loop exits (user stop or missing file). The frontend resets the Follow button. |
 | `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged). The frontend listens to this event to reset the Connect button to its disconnected state. |
 
 ---
@@ -394,12 +428,14 @@ app/
     SerialTerminalLine.tsx   — Individual row renderer
     ControlPanel.tsx         — Tabbed source + settings panel
     SerialSettings.tsx       — Serial port configuration
+    FileSettings.tsx         — File follow configuration (File tab)
     HighLighSettings.tsx     — Highlight/filter rules table
   types/
     SerialMessage.tsx        — SerialMessage type definition
 src-tauri/
   src/
     lib.rs                   — All Rust backend logic
+    tail_splitter.rs         — Line splitting and UTF-8 decoding for file follow
     main.rs                  — Tauri entry point
   tauri.conf.json
   Cargo.toml
@@ -409,9 +445,10 @@ src-tauri/
 
 ## Key Design Decisions
 
-- **HTML-in-messages**: The Rust backend injects `<span style="color:...">` tags directly into the message string. The frontend renders this via `dangerouslySetInnerHTML`. The raw original line is stored in `rawline` to allow re-processing when rules change.
+- **HTML-in-messages**: The Rust backend sends each line as an HTML string with `<span style="color:...">` tags, rendered via `dangerouslySetInnerHTML`. The raw original line is stored in `rawline` to allow re-processing when rules change.
+- **Rules on raw text, HTML built last**: rules used to inject tags into the line and run on that markup, and the log text was not escaped. A `<` in a log swallowed the rest of the line, HTML coming from a log or a device was interpreted by the webview (with access to Tauri commands), and rules could match inside tags (e.g. `\d` broke a `#cc7f12` color, `^` failed after a whole-line rule). Rules now only see the raw text and set per-character colors; the HTML is built once and escaped. Sending structured `{text, color}` segments instead of HTML was considered: it removes `dangerouslySetInnerHTML` entirely, but changes the event format and the frontend for little gain once the text is escaped.
 - **Virtualized rendering**: `react-window` is used to handle tens of thousands of log lines without DOM performance issues. Row heights are computed per-row (0 for removed lines).
-- **Highlight rule ordering**: Rules are applied sequentially; the first matching `remove=whole_line` rule terminates processing for that line.
+- **Highlight rule ordering**: Rules are applied sequentially; a later rule overrides earlier colors, and the first matching `remove=whole_line` rule terminates processing for that line.
 - **Auto-scroll**: Each panel independently tracks whether auto-scroll is enabled. A timestamp-based ref suppresses false negatives when programmatically scrolling.
 - **Persistence**: Highlight rules are saved to JSON on every change and restored on startup. The frontend owns the canonical rule state and pushes it to the backend.
 - **Resizable panels**: The vertical split (main/focus) is user-resizable via `re-resizable`. The horizontal split is achieved by making the terminals pane `flex: 1` and the settings pane a `re-resizable` component that resizes from its left edge. This avoids the issue where `re-resizable` injects `width` as an inline style, which would override any CSS flex behavior if the resizable element itself were the flex child.

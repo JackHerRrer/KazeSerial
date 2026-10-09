@@ -41,10 +41,10 @@ struct AdvancedSelectionSetting {
 }
 
 #[derive(Clone)]
-struct ColoredSpan {
+struct ColoredSpan<'a> {
     start: usize,
     end: usize,
-    color: String,
+    color: &'a str,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -73,13 +73,12 @@ struct HighlightSettings {
     text: String,
     color: String,
     is_regex: bool,
-    case_sensitive: bool,
     select_mode: HighlightSelectMode,
     custom_groups: Vec<usize>,   // capture group indices for plain custom mode
     advanced_custom: Vec<AdvancedSelectionSetting>, // per-group color overrides
     focus: bool,
     remove: bool,
-    regex: Option<Regex>,        // compiled regex, None for plain-text rules
+    matcher: Regex,              // rule regex, or the escaped text for plain-text rules
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -255,63 +254,12 @@ fn collect_selected_group_spans(
     normalize_spans(spans)
 }
 
-/// Wraps selected spans of `segment` in a `<span style="color:">` tag.
-/// Falls back to wrapping the entire segment when no spans are provided.
-fn build_highlighted_segment(segment: &str, spans: &[(usize, usize)], color: &str) -> String {
-    let mut output = String::new();
-    let mut cursor = 0usize;
-
-    for (start, end) in spans {
-        output.push_str(&segment[cursor..*start]);
-        output.push_str(&format!("<span style=\"color:{};\">", color));
-        output.push_str(&segment[*start..*end]);
-        output.push_str("</span>");
-        cursor = *end;
-    }
-
-    output.push_str(&segment[cursor..]);
-    output
-}
-
-/// Removes the selected spans from `segment`, keeping surrounding text.
-fn build_removed_segment(segment: &str, spans: &[(usize, usize)]) -> String {
-    let mut output = String::new();
-    let mut cursor = 0usize;
-
-    for (start, end) in spans {
-        output.push_str(&segment[cursor..*start]);
-        cursor = *end;
-    }
-
-    output.push_str(&segment[cursor..]);
-    output
-}
-
-/// Applies highlighting to a single regex match using a custom group selection.
-fn highlight_custom_regex_match(
+/// Collects non-overlapping colored spans from all advanced selections. Spans are sorted
+/// by (start, end) and one overlapping an already kept span is skipped.
+fn collect_advanced_colored_spans<'a>(
     captures: &regex::Captures<'_>,
-    color: &str,
-    selected_groups: &[usize],
-) -> String {
-    let Some(whole_match) = captures.get(0) else {
-        return String::new();
-    };
-
-    let segment = whole_match.as_str();
-    let mut spans = collect_selected_group_spans(captures, selected_groups);
-
-    if spans.is_empty() {
-        spans.push((0, segment.len()));
-    }
-
-    build_highlighted_segment(segment, &spans, color)
-}
-
-/// Collects non-overlapping colored spans from all advanced selections (first match wins).
-fn collect_advanced_colored_spans(
-    captures: &regex::Captures<'_>,
-    advanced_custom: &[AdvancedSelectionSetting],
-) -> Vec<ColoredSpan> {
+    advanced_custom: &'a [AdvancedSelectionSetting],
+) -> Vec<ColoredSpan<'a>> {
     let mut colored_spans: Vec<ColoredSpan> = Vec::new();
 
     for selection in advanced_custom {
@@ -320,7 +268,7 @@ fn collect_advanced_colored_spans(
             colored_spans.push(ColoredSpan {
                 start,
                 end,
-                color: selection.color.clone(),
+                color: &selection.color,
             });
         }
     }
@@ -340,38 +288,6 @@ fn collect_advanced_colored_spans(
     resolved
 }
 
-/// Applies per-group color highlights to a single regex match in advanced mode.
-fn highlight_advanced_regex_match(
-    captures: &regex::Captures<'_>,
-    advanced_custom: &[AdvancedSelectionSetting],
-    fallback_color: &str,
-) -> String {
-    let Some(whole_match) = captures.get(0) else {
-        return String::new();
-    };
-
-    let segment = whole_match.as_str();
-    let spans = collect_advanced_colored_spans(captures, advanced_custom);
-
-    if spans.is_empty() {
-        return format!("<span style=\"color:{};\">{}</span>", fallback_color, segment);
-    }
-
-    let mut output = String::new();
-    let mut cursor = 0usize;
-
-    for span in spans {
-        output.push_str(&segment[cursor..span.start]);
-        output.push_str(&format!("<span style=\"color:{};\">", span.color));
-        output.push_str(&segment[span.start..span.end]);
-        output.push_str("</span>");
-        cursor = span.end;
-    }
-
-    output.push_str(&segment[cursor..]);
-    output
-}
-
 /// Collects the union of all group indices across all advanced selections (for removal).
 fn collect_advanced_groups_for_remove(advanced_custom: &[AdvancedSelectionSetting]) -> Vec<usize> {
     let mut seen = HashSet::new();
@@ -388,168 +304,205 @@ fn collect_advanced_groups_for_remove(advanced_custom: &[AdvancedSelectionSettin
     groups
 }
 
-/// Removes selected capture groups from a single regex match.
-fn remove_custom_regex_match(captures: &regex::Captures<'_>, selected_groups: &[usize]) -> String {
-    let Some(whole_match) = captures.get(0) else {
-        return String::new();
-    };
+/// Byte ranges of `text` a `remove` rule deletes: the selected capture groups in custom
+/// mode (the whole match when none of them matched), the whole matches otherwise.
+fn removal_spans(hl: &HighlightSettings, text: &str) -> Vec<(usize, usize)> {
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    if hl.is_regex && hl.select_mode == HighlightSelectMode::Custom {
+        let groups = if hl.advanced_custom.is_empty() {
+            hl.custom_groups.clone()
+        } else {
+            collect_advanced_groups_for_remove(&hl.advanced_custom)
+        };
+        for captures in hl.matcher.captures_iter(text) {
+            let Some(whole_match) = captures.get(0) else { continue };
+            let selected = collect_selected_group_spans(&captures, &groups);
+            if selected.is_empty() {
+                spans.push((whole_match.start(), whole_match.end()));
+            } else {
+                let offset = whole_match.start();
+                spans.extend(selected.into_iter().map(|(start, end)| (offset + start, offset + end)));
+            }
+        }
+    } else {
+        spans.extend(hl.matcher.find_iter(text).map(|m| (m.start(), m.end())));
+    }
+    normalize_spans(spans)
+}
 
-    let segment = whole_match.as_str();
-    let spans = collect_selected_group_spans(captures, selected_groups);
+/// Byte ranges of `text` a highlight rule colors, with their color: the selected capture
+/// groups in custom mode (the whole match when none of them matched), the whole matches otherwise.
+fn colored_spans<'a>(hl: &'a HighlightSettings, text: &str) -> Vec<ColoredSpan<'a>> {
+    let mut spans: Vec<ColoredSpan> = Vec::new();
+    if hl.is_regex && hl.select_mode == HighlightSelectMode::Custom {
+        for captures in hl.matcher.captures_iter(text) {
+            let Some(whole_match) = captures.get(0) else { continue };
+            let offset = whole_match.start();
+            let selected: Vec<ColoredSpan> = if hl.advanced_custom.is_empty() {
+                collect_selected_group_spans(&captures, &hl.custom_groups)
+                    .into_iter()
+                    .map(|(start, end)| ColoredSpan { start, end, color: &hl.color })
+                    .collect()
+            } else {
+                collect_advanced_colored_spans(&captures, &hl.advanced_custom)
+            };
+            if selected.is_empty() {
+                spans.push(ColoredSpan { start: whole_match.start(), end: whole_match.end(), color: &hl.color });
+            } else {
+                spans.extend(selected.into_iter().map(|span| ColoredSpan {
+                    start: offset + span.start,
+                    end: offset + span.end,
+                    ..span
+                }));
+            }
+        }
+    } else {
+        spans.extend(hl.matcher.find_iter(text).map(|m| ColoredSpan {
+            start: m.start(),
+            end: m.end(),
+            color: &hl.color,
+        }));
+    }
+    spans
+}
 
-    if spans.is_empty() {
-        return String::new();
+/// Escapes the characters that have a meaning in HTML text and attribute values.
+fn html_escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+/// A log line being processed: the text left by `remove` rules and the color of each byte.
+/// Rules only ever see this raw text, never HTML; the markup is built once by [`Self::to_html`].
+struct StyledLine<'a> {
+    text: String,
+    /// Color of each byte of `text`. A later rule overrides an earlier one.
+    colors: Vec<Option<&'a str>>,
+}
+
+impl<'a> StyledLine<'a> {
+    fn new(text: String) -> Self {
+        let colors = vec![None; text.len()];
+        Self { text, colors }
     }
 
-    build_removed_segment(segment, &spans)
+    fn color(&mut self, span: &ColoredSpan<'a>) {
+        for color in &mut self.colors[span.start..span.end] {
+            *color = Some(span.color);
+        }
+    }
+
+    /// Deletes sorted, non-overlapping byte ranges, with their colors.
+    fn remove(&mut self, spans: &[(usize, usize)]) {
+        let mut text = String::with_capacity(self.text.len());
+        let mut colors = Vec::with_capacity(self.colors.len());
+        let mut cursor = 0usize;
+        for &(start, end) in spans.iter().chain(std::iter::once(&(self.text.len(), self.text.len()))) {
+            text.push_str(&self.text[cursor..start]);
+            colors.extend_from_slice(&self.colors[cursor..start]);
+            cursor = end;
+        }
+        self.text = text;
+        self.colors = colors;
+    }
+
+    fn clear(&mut self) {
+        self.remove(&[(0, self.text.len())]);
+    }
+
+    /// Escaped HTML with one `<span>` per run of same-colored text.
+    fn to_html(&self) -> String {
+        let mut html = String::with_capacity(self.text.len());
+        let mut current: Option<&str> = None;
+        let mut run_start = 0usize;
+        let flush = |html: &mut String, color: Option<&str>, run: &str| {
+            if run.is_empty() {
+                return;
+            }
+            match color {
+                Some(color) => {
+                    html.push_str(&format!("<span style=\"color:{};\">", html_escape(color)));
+                    html.push_str(&html_escape(run));
+                    html.push_str("</span>");
+                }
+                None => html.push_str(&html_escape(run)),
+            }
+        };
+        for (index, _) in self.text.char_indices() {
+            let color = self.colors[index];
+            if color != current {
+                flush(&mut html, current, &self.text[run_start..index]);
+                current = color;
+                run_start = index;
+            }
+        }
+        flush(&mut html, current, &self.text[run_start..]);
+        html
+    }
 }
 
 /// Applies all highlight rules to a single raw log line and returns the processed [`Payload`].
 /// This function is pure (no I/O, no locking) so it can safely be called from rayon threads.
+///
+/// Rules are applied in order on the raw text: a `remove` rule changes the text later rules
+/// see, a whole-line `remove` stops processing. The HTML message is built at the end, with
+/// the log text escaped so it can never be interpreted as markup.
 fn process_line(input_line: String, highlights_vec: &[HighlightSettings], message_id: u64) -> Payload {
-    let rawline = input_line.clone();
-    let mut line = input_line;
+    let mut line = StyledLine::new(input_line.clone());
     let mut matched_for_focus = false;
-    let mut should_send_raw = false;
+    let mut any_rule_matched = false;
     let mut removed_line = false;
-    // Applique le surlignage côté Rust
-    for hl in highlights_vec {
-        if !hl.text.is_empty() {
-            let does_match = if hl.is_regex {
-                hl.regex.as_ref().map_or(false, |r| r.is_match(&line))
-            } else if hl.case_sensitive {
-                line.contains(&hl.text as &str)
-            } else {
-                line.to_lowercase().contains(&hl.text.to_lowercase() as &str)
-            };
-            if does_match {
-                if hl.remove {
-                    if hl.select_mode == HighlightSelectMode::WholeLine {
-                        line.clear();
-                        removed_line = true;
-                        should_send_raw = true;
-                        break;
-                    }
 
-                    if hl.is_regex {
-                        if let Some(ref regex) = hl.regex {
-                            if hl.select_mode == HighlightSelectMode::Custom {
-                                if hl.advanced_custom.is_empty() {
-                                    line = regex
-                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
-                                            remove_custom_regex_match(captures, &hl.custom_groups)
-                                        })
-                                        .to_string();
-                                } else {
-                                    let groups_for_remove = collect_advanced_groups_for_remove(&hl.advanced_custom);
-                                    line = regex
-                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
-                                            remove_custom_regex_match(captures, &groups_for_remove)
-                                        })
-                                        .to_string();
-                                }
-                            } else {
-                                line = regex.replace_all(&line, "").to_string();
-                            }
-                        }
-                    } else if hl.case_sensitive {
-                        line = line.replace(
-                            &hl.text as &str,
-                            "",
-                        );
-                    } else {
-                        let lower_text = hl.text.to_lowercase();
-                        let lower_line = line.to_lowercase();
-                        let mut result = String::new();
-                        let mut search_from = 0usize;
-                        while let Some(pos) = lower_line[search_from..].find(&lower_text as &str) {
-                            let abs = search_from + pos;
-                            result.push_str(&line[search_from..abs]);
-                            search_from = abs + lower_text.len();
-                        }
-                        result.push_str(&line[search_from..]);
-                        line = result;
-                    }
-                } else {
-                    if hl.select_mode == HighlightSelectMode::WholeLine {
-                        line = format!("<span style=\"color:{}\">{}</span>", hl.color, line);
-                    } else if hl.is_regex {
-                        if let Some(ref regex) = hl.regex {
-                            if hl.select_mode == HighlightSelectMode::Custom {
-                                if hl.advanced_custom.is_empty() {
-                                    line = regex
-                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
-                                            highlight_custom_regex_match(
-                                                captures,
-                                                &hl.color,
-                                                &hl.custom_groups,
-                                            )
-                                        })
-                                        .to_string();
-                                } else {
-                                    line = regex
-                                        .replace_all(&line, |captures: &regex::Captures<'_>| {
-                                            highlight_advanced_regex_match(
-                                                captures,
-                                                &hl.advanced_custom,
-                                                &hl.color,
-                                            )
-                                        })
-                                        .to_string();
-                                }
-                            } else {
-                                line = regex
-                                    .replace_all(
-                                        &line,
-                                        format!("<span style=\"color:{};\">$0</span>", hl.color),
-                                    )
-                                    .to_string();
-                            }
-                        }
-                    } else if hl.case_sensitive {
-                        line = line.replace(
-                            &hl.text as &str,
-                            &format!("<span style=\"color:{}\">{}</span>", hl.color, hl.text),
-                        );
-                    } else {
-                        let lower_text = hl.text.to_lowercase();
-                        let lower_line = line.to_lowercase();
-                        let mut result = String::new();
-                        let mut search_from = 0usize;
-                        while let Some(pos) = lower_line[search_from..].find(&lower_text as &str) {
-                            let abs = search_from + pos;
-                            result.push_str(&line[search_from..abs]);
-                            let matched_slice = &line[abs..abs + lower_text.len()];
-                            result.push_str(&format!("<span style=\"color:{}\">{}</span>", hl.color, matched_slice));
-                            search_from = abs + lower_text.len();
-                        }
-                        result.push_str(&line[search_from..]);
-                        line = result;
-                    }
-                }
-                if hl.focus && !hl.remove {
-                    matched_for_focus = true;
-                }
-                should_send_raw = true;
+    for hl in highlights_vec {
+        if hl.text.is_empty() || !hl.matcher.is_match(&line.text) {
+            continue;
+        }
+        any_rule_matched = true;
+
+        if hl.remove {
+            if hl.select_mode == HighlightSelectMode::WholeLine {
+                line.clear();
+                removed_line = true;
+                break;
+            }
+            let spans = removal_spans(hl, &line.text);
+            line.remove(&spans);
+        } else if hl.select_mode == HighlightSelectMode::WholeLine {
+            line.color(&ColoredSpan { start: 0, end: line.text.len(), color: &hl.color });
+        } else {
+            for span in colored_spans(hl, &line.text) {
+                line.color(&span);
             }
         }
+
+        if hl.focus && !hl.remove {
+            matched_for_focus = true;
+        }
     }
-    if should_send_raw {
-        Payload {
-            id: message_id,
-            message: line,
-            matched: matched_for_focus,
-            rawline: Some(rawline),
-            removed_line,
-        }
+
+    let message = line.to_html();
+    // The frontend and the log store fall back to `message` when `rawline` is missing, so it
+    // must be set whenever the message differs from the raw line (escaping included).
+    let rawline = if any_rule_matched || message != input_line {
+        Some(input_line)
     } else {
-        Payload {
-            id: message_id,
-            message: line,
-            matched: matched_for_focus,
-            rawline: None,
-            removed_line,
-        }
+        None
+    };
+    Payload {
+        id: message_id,
+        message,
+        matched: matched_for_focus,
+        rawline,
+        removed_line,
     }
 }
 
@@ -588,74 +541,77 @@ async fn append_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Resu
     Ok(())
 }
 
+/// Converts a rule received from the frontend into its processing form.
+/// Returns `None` when its regex does not compile, so the rule is skipped.
+fn build_highlight_settings(elem: HighlightMessage) -> Option<HighlightSettings> {
+    let pattern = if elem.is_regex {
+        elem.text.clone()
+    } else {
+        regex::escape(&elem.text)
+    };
+    let matcher = match regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!elem.case_sensitive)
+        .build()
+    {
+        Ok(reg) => reg,
+        Err(err) => {
+            println!("Failed to set regex: {}", err);
+            return None;
+        }
+    };
+
+    let mut select_mode = if elem.whole_line {
+        HighlightSelectMode::WholeLine
+    } else {
+        elem.select_mode
+    };
+
+    if !elem.is_regex && select_mode == HighlightSelectMode::Custom {
+        select_mode = HighlightSelectMode::Match;
+    }
+
+    let advanced_custom = if elem.is_regex && select_mode == HighlightSelectMode::Custom {
+        elem.advanced_selections
+            .into_iter()
+            .map(|selection| AdvancedSelectionSetting {
+                color: selection.color,
+                custom_groups: parse_custom_groups(&selection.custom_select),
+            })
+            .filter(|selection| !selection.custom_groups.is_empty())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let custom_groups = if elem.is_regex && select_mode == HighlightSelectMode::Custom && advanced_custom.is_empty() {
+        parse_custom_groups(&elem.custom_select)
+    } else {
+        Vec::new()
+    };
+
+    Some(HighlightSettings {
+        _id: elem.id,
+        text: elem.text,
+        color: elem.color,
+        is_regex: elem.is_regex,
+        select_mode,
+        custom_groups,
+        advanced_custom,
+        focus: if elem.remove { false } else { elem.focus },
+        remove: elem.remove,
+        matcher,
+    })
+}
+
 #[tauri::command]
 async fn set_highlights(
     highlights: Vec<HighlightMessage>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut hilights_settings: Vec<HighlightSettings> = Vec::new();
-    for elem in highlights {
-        let text = elem.text.clone();
-        let cur_regex = if elem.is_regex {
-            let pattern = if elem.case_sensitive {
-                text.clone()
-            } else {
-                format!("(?i){}", text)
-            };
-            match regex::Regex::new(&pattern) {
-                Ok(reg) => Some(reg),
-                Err(err) => {
-                    println!("Failed to set regex: {}", err);
-                    continue;
-                }
-            }
-        } else {
-            None
-        };
-
-        let mut select_mode = if elem.whole_line {
-            HighlightSelectMode::WholeLine
-        } else {
-            elem.select_mode
-        };
-
-        if !elem.is_regex && select_mode == HighlightSelectMode::Custom {
-            select_mode = HighlightSelectMode::Match;
-        }
-
-        let advanced_custom = if elem.is_regex && select_mode == HighlightSelectMode::Custom {
-            elem.advanced_selections
-                .into_iter()
-                .map(|selection| AdvancedSelectionSetting {
-                    color: selection.color,
-                    custom_groups: parse_custom_groups(&selection.custom_select),
-                })
-                .filter(|selection| !selection.custom_groups.is_empty())
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-
-        let custom_groups = if elem.is_regex && select_mode == HighlightSelectMode::Custom && advanced_custom.is_empty() {
-            parse_custom_groups(&elem.custom_select)
-        } else {
-            Vec::new()
-        };
-
-        hilights_settings.push(HighlightSettings {
-            _id: elem.id,
-            text: elem.text,
-            color: elem.color,
-            is_regex: elem.is_regex,
-            case_sensitive: elem.case_sensitive,
-            select_mode,
-            custom_groups,
-            advanced_custom,
-            focus: if elem.remove { false } else { elem.focus },
-            remove: elem.remove,
-            regex: cur_regex,
-        });
-    }
+    let hilights_settings: Vec<HighlightSettings> = highlights
+        .into_iter()
+        .filter_map(build_highlight_settings)
+        .collect();
     let mut lock = state.highlights.lock().await;
     *lock = hilights_settings;
     Ok(())
@@ -1056,4 +1012,301 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod process_line_tests {
+    use super::*;
+
+    const R: &str = "R";
+    const G: &str = "G";
+
+    /// Plain-text, case-sensitive highlight rule, as the frontend sends it.
+    fn rule(text: &str, color: &str) -> HighlightMessage {
+        HighlightMessage {
+            id: 0,
+            text: text.to_string(),
+            color: color.to_string(),
+            is_regex: false,
+            case_sensitive: true,
+            select_mode: HighlightSelectMode::Match,
+            custom_select: String::new(),
+            whole_line: false,
+            advanced_selections: Vec::new(),
+            focus: false,
+            remove: false,
+        }
+    }
+
+    fn regex(text: &str, color: &str) -> HighlightMessage {
+        HighlightMessage { is_regex: true, ..rule(text, color) }
+    }
+
+    fn whole_line(text: &str, color: &str) -> HighlightMessage {
+        HighlightMessage { whole_line: true, select_mode: HighlightSelectMode::WholeLine, ..rule(text, color) }
+    }
+
+    fn remove(rule: HighlightMessage) -> HighlightMessage {
+        HighlightMessage { remove: true, ..rule }
+    }
+
+    /// Regex rule in advanced mode, with `(color, groups)` selections.
+    fn advanced(text: &str, color: &str, selections: &[(&str, &str)]) -> HighlightMessage {
+        HighlightMessage {
+            select_mode: HighlightSelectMode::Custom,
+            advanced_selections: selections
+                .iter()
+                .map(|(color, groups)| AdvancedSelectionMessage {
+                    color: color.to_string(),
+                    custom_select: groups.to_string(),
+                })
+                .collect(),
+            ..regex(text, color)
+        }
+    }
+
+    fn process(line: &str, rules: Vec<HighlightMessage>) -> Payload {
+        let settings: Vec<HighlightSettings> =
+            rules.into_iter().filter_map(build_highlight_settings).collect();
+        process_line(line.to_string(), &settings, 1)
+    }
+
+    /// Renders the HTML message as the user sees it: text with `{COLOR:...}` around colored
+    /// runs. Nested spans resolve to the innermost color, like in the browser.
+    fn rendered(html: &str) -> String {
+        let mut stack: Vec<String> = Vec::new();
+        let mut chars: Vec<(char, Option<String>)> = Vec::new();
+        let mut rest = html;
+        while let Some(c) = rest.chars().next() {
+            if let Some(after) = rest.strip_prefix("<span style=\"color:") {
+                let end = after.find("\">").expect("unterminated span tag");
+                let color = html_unescape(after[..end].trim_end_matches(';'));
+                stack.push(color);
+                rest = &after[end + 2..];
+            } else if let Some(after) = rest.strip_prefix("</span>") {
+                stack.pop().expect("unbalanced span");
+                rest = after;
+            } else if c == '<' {
+                panic!("unexpected markup in {:?}", html);
+            } else if c == '&' {
+                let end = rest.find(';').expect("unterminated entity");
+                let decoded = html_unescape(&rest[..=end]);
+                chars.extend(decoded.chars().map(|d| (d, stack.last().cloned())));
+                rest = &rest[end + 1..];
+            } else {
+                chars.push((c, stack.last().cloned()));
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+        assert!(stack.is_empty(), "unbalanced span in {:?}", html);
+
+        let mut out = String::new();
+        let mut current: Option<String> = None;
+        for (c, color) in chars {
+            if color != current {
+                if current.is_some() {
+                    out.push('}');
+                }
+                if let Some(color) = &color {
+                    out.push_str(&format!("{{{}:", color));
+                }
+                current = color;
+            }
+            out.push(c);
+        }
+        if current.is_some() {
+            out.push('}');
+        }
+        out
+    }
+
+    fn html_unescape(text: &str) -> String {
+        text.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+    }
+
+    #[test]
+    fn line_without_match_is_unchanged() {
+        let payload = process("abc", vec![rule("x", R)]);
+        assert_eq!(payload.message, "abc");
+        assert_eq!(payload.rawline, None);
+        assert!(!payload.matched);
+    }
+
+    #[test]
+    fn plain_text_highlights_every_occurrence() {
+        let payload = process("err x err", vec![rule("err", R)]);
+        assert_eq!(rendered(&payload.message), "{R:err} x {R:err}");
+        assert_eq!(payload.rawline.as_deref(), Some("err x err"));
+    }
+
+    #[test]
+    fn plain_text_case_insensitive_keeps_original_casing() {
+        let rule = HighlightMessage { case_sensitive: false, ..rule("err", R) };
+        assert_eq!(rendered(&process("Err x ERR", vec![rule]).message), "{R:Err} x {R:ERR}");
+    }
+
+    #[test]
+    fn regex_highlights_every_match() {
+        assert_eq!(rendered(&process("a1 b22", vec![regex(r"\d+", R)]).message), "a{R:1} b{R:22}");
+    }
+
+    #[test]
+    fn regex_case_insensitive() {
+        let rule = HighlightMessage { case_sensitive: false, ..regex("ERR", R) };
+        assert_eq!(rendered(&process("err", vec![rule]).message), "{R:err}");
+    }
+
+    #[test]
+    fn whole_line_colors_the_whole_line() {
+        assert_eq!(rendered(&process("abc", vec![whole_line("b", R)]).message), "{R:abc}");
+    }
+
+    #[test]
+    fn whole_line_rule_follows_rule_order_priority() {
+        assert_eq!(rendered(&process("abc", vec![whole_line("a", R), rule("b", G)]).message), "{R:a}{G:b}{R:c}");
+        assert_eq!(rendered(&process("abc", vec![rule("b", G), whole_line("a", R)]).message), "{R:abc}");
+    }
+
+    #[test]
+    fn last_whole_line_rule_wins() {
+        assert_eq!(rendered(&process("abc", vec![whole_line("a", R), whole_line("b", G)]).message), "{G:abc}");
+    }
+
+    #[test]
+    fn later_rule_wins_on_overlap() {
+        assert_eq!(rendered(&process("error", vec![rule("error", R), rule("err", G)]).message), "{G:err}{R:or}");
+    }
+
+    #[test]
+    fn remove_plain_text() {
+        let payload = process("a--b", vec![remove(rule("--", R))]);
+        assert_eq!(payload.message, "ab");
+        assert_eq!(payload.rawline.as_deref(), Some("a--b"));
+        assert!(!payload.removed_line);
+    }
+
+    #[test]
+    fn later_rules_see_the_text_left_by_remove() {
+        assert_eq!(rendered(&process("a-b", vec![remove(rule("-", R)), rule("ab", G)]).message), "{G:ab}");
+    }
+
+    #[test]
+    fn remove_regex() {
+        assert_eq!(process("abc   ", vec![remove(regex(r"\s+$", R))]).message, "abc");
+    }
+
+    #[test]
+    fn remove_whole_line_stops_processing() {
+        let payload = process("abc", vec![remove(whole_line("b", R)), HighlightMessage { focus: true, ..rule("a", G) }]);
+        assert_eq!(payload.message, "");
+        assert!(payload.removed_line);
+        assert!(!payload.matched);
+        assert_eq!(payload.rawline.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn advanced_colors_each_group() {
+        let rule = advanced(r"(\w+)=(\d+)", R, &[(R, "1"), (G, "2")]);
+        assert_eq!(rendered(&process("x=1 y=22", vec![rule]).message), "{R:x}={G:1} {R:y}={G:22}");
+    }
+
+    #[test]
+    fn advanced_overlapping_groups_earliest_then_shortest_wins() {
+        // Groups are sorted by (start, end); a group overlapping an already kept one is skipped
+        let rule = advanced(r"((a)b)", R, &[(G, "1"), (R, "2")]);
+        assert_eq!(rendered(&process("ab", vec![rule]).message), "{R:a}b");
+    }
+
+    #[test]
+    fn advanced_without_groups_colors_the_whole_match() {
+        let rule = advanced(r"\d+", G, &[(R, "")]);
+        assert_eq!(rendered(&process("a12", vec![rule]).message), "a{G:12}");
+    }
+
+    #[test]
+    fn remove_advanced_removes_selected_groups() {
+        let rule = remove(advanced(r"(\d+)-(\d+)", R, &[(R, "1")]));
+        assert_eq!(process("a 12-34 b", vec![rule]).message, "a -34 b");
+    }
+
+    #[test]
+    fn focus_is_set_by_highlight_rules_only() {
+        assert!(process("abc", vec![HighlightMessage { focus: true, ..rule("b", R) }]).matched);
+        assert!(!process("abc", vec![remove(HighlightMessage { focus: true, ..rule("b", R) })]).matched);
+    }
+
+    #[test]
+    fn html_characters_in_the_log_are_escaped() {
+        let payload = process("if a <b && c> d", vec![]);
+        assert_eq!(payload.message, "if a &lt;b &amp;&amp; c&gt; d");
+        // Refresh, Save and the MCP store read `rawline` when present, `message` otherwise
+        assert_eq!(payload.rawline.as_deref(), Some("if a <b && c> d"));
+    }
+
+    #[test]
+    fn html_in_the_log_is_never_interpreted() {
+        let payload = process("<img src=x onerror=alert(1)>", vec![rule("img", R)]);
+        assert_eq!(
+            payload.message,
+            "&lt;<span style=\"color:R;\">img</span> src=x onerror=alert(1)&gt;"
+        );
+        assert_eq!(rendered(&payload.message), "<{R:img} src=x onerror=alert(1)>");
+    }
+
+    #[test]
+    fn rules_can_match_html_characters() {
+        assert_eq!(rendered(&process("a <tag> b", vec![rule("<tag>", R)]).message), "a {R:<tag>} b");
+        assert_eq!(rendered(&process("x & y", vec![regex("&", R)]).message), "x {R:&} y");
+    }
+
+    #[test]
+    fn rules_do_not_match_entities_or_markup() {
+        let rules = vec![rule("e", "#cc7f12"), rule("lt", G), rule("span", G), regex(r"\d", G)];
+        assert_eq!(rendered(&process("e <", rules).message), "{#cc7f12:e} <");
+    }
+
+    #[test]
+    fn anchored_regex_matches_after_whole_line_rule() {
+        assert_eq!(rendered(&process("ab", vec![whole_line("a", R), regex("^a", G)]).message), "{G:a}{R:b}");
+    }
+
+    #[test]
+    fn match_can_span_text_colored_by_an_earlier_rule() {
+        assert_eq!(rendered(&process("error x", vec![rule("rr", R), rule("error x", G)]).message), "{G:error x}");
+    }
+
+    #[test]
+    fn color_value_is_escaped() {
+        let payload = process("a", vec![rule("a", "red\" onmouseover=\"x")]);
+        assert_eq!(payload.message, "<span style=\"color:red&quot; onmouseover=&quot;x;\">a</span>");
+    }
+
+    #[test]
+    fn reprocessing_rawline_gives_the_same_message() {
+        let rules = || vec![rule("b", R), remove(rule("-", G))];
+        let first = process("a <b> - &", rules());
+        let second = process(first.rawline.as_deref().unwrap(), rules());
+        assert_eq!(first.message, second.message);
+    }
+
+    #[test]
+    fn plain_text_rule_is_not_a_regex() {
+        assert_eq!(rendered(&process("a.b axb", vec![rule("a.b", R)]).message), "{R:a.b} axb");
+    }
+
+    #[test]
+    fn multibyte_characters_are_kept_intact() {
+        let payload = process("été ° ok", vec![rule("t", R), remove(rule("°", G))]);
+        assert_eq!(rendered(&payload.message), "é{R:t}é  ok");
+    }
+
+    #[test]
+    fn empty_regex_match_counts_as_match_without_color() {
+        let payload = process("abc", vec![regex("x*", R)]);
+        assert_eq!(rendered(&payload.message), "abc");
+        assert_eq!(payload.rawline.as_deref(), Some("abc"));
+    }
 }
