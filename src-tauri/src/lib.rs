@@ -1,5 +1,6 @@
 mod log_store;
 mod mcp;
+mod tail_splitter;
 
 use log_store::{LogRecord, LogSource, LogStore};
 use regex::Regex;
@@ -9,6 +10,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use tail_splitter::{decode_utf8, TailSplitter};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
@@ -831,11 +833,11 @@ async fn watch_file(
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     state.file_watch_active.store(true, Ordering::SeqCst);
 
-    // Read initial content and track byte position
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let initial_size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
-
-    let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    // Read initial content and track the byte position actually consumed
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let (content, consumed) = decode_utf8(&bytes);
+    let mut splitter = TailSplitter::default();
+    let lines = splitter.feed(&content);
 
     state
         .log_store
@@ -850,7 +852,7 @@ async fn watch_file(
     let app_handle = app.clone();
 
     tokio::spawn(async move {
-        let mut last_size = initial_size;
+        let mut last_size = consumed as u64;
 
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -866,23 +868,27 @@ async fn watch_file(
             let new_size = metadata.len();
 
             if new_size > last_size {
-                use std::io::{BufRead, BufReader, Seek, SeekFrom};
-                if let Ok(mut file) = std::fs::File::open(&path) {
-                    if file.seek(SeekFrom::Start(last_size)).is_ok() {
-                        let reader = BufReader::new(file);
-                        let new_lines: Vec<String> =
-                            reader.lines().filter_map(|l| l.ok()).collect();
-
-                        if !new_lines.is_empty() {
-                            let results = process_batch(&app_handle, new_lines).await;
-                            publish_append(&app_handle, results).await;
-                        }
-                    }
+                use std::io::{Read, Seek, SeekFrom};
+                let mut bytes = Vec::new();
+                let read = std::fs::File::open(&path).and_then(|mut file| {
+                    file.seek(SeekFrom::Start(last_size))?;
+                    file.read_to_end(&mut bytes)
+                });
+                if read.is_err() {
+                    continue;
                 }
-                last_size = new_size;
+                let (text, consumed) = decode_utf8(&bytes);
+                last_size += consumed as u64;
+
+                let new_lines = splitter.feed(&text);
+                if !new_lines.is_empty() {
+                    let results = process_batch(&app_handle, new_lines).await;
+                    publish_append(&app_handle, results).await;
+                }
             } else if new_size < last_size {
                 // File truncated/rotated — restart from beginning
                 last_size = 0;
+                splitter = TailSplitter::default();
             }
         }
 
