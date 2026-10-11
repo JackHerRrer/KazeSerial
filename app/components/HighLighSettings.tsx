@@ -234,6 +234,18 @@ async function saveHighlightsToFile(highlights: HighligtConfig[]) {
     }
 }
 
+const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode =>
+    value === 'match' || value === 'whole_line' || value === 'custom';
+
+const getSelectModeFromPersisted = (highlight: PersistedHighlightConfig): HighlightSelectMode => {
+    if (isHighlightSelectMode(highlight.select_mode)) return highlight.select_mode;
+    if (highlight.whole_line) return 'whole_line';
+    return 'match';
+};
+
+const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode): HighlightSelectMode =>
+    (!isRegex && selectMode === 'custom') ? 'match' : selectMode;
+
 /** Parses a persisted JSON config entry into a runtime HighligtConfig, with safe defaults */
 function parsePersistedHighlight(
     h: PersistedHighlightConfig,
@@ -340,30 +352,15 @@ const HighLighSettings: React.FC = () => {
     const [draggedHighlightId, setDraggedHighlightId] = useState<number | null>(null);
     const [dropIndicator, setDropIndicator] = useState<{ id: number; position: 'before' | 'after' } | null>(null);
 
-    const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode =>
-        value === 'match' || value === 'whole_line' || value === 'custom';
-
-    const getSelectModeFromPersisted = (highlight: PersistedHighlightConfig): HighlightSelectMode => {
-        if (isHighlightSelectMode(highlight.select_mode)) return highlight.select_mode;
-        if (highlight.whole_line) return 'whole_line';
-        return 'match';
-    };
-
-    const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode): HighlightSelectMode =>
-        (!isRegex && selectMode === 'custom') ? 'match' : selectMode;
     // Load highlights from AppConfig on mount
-    async function loadHighlightsFromFile() {
-        try {
-            const result = await readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig });
-            const persisted = JSON.parse(result) as PersistedHighlightConfig[];
-            setHighlights(persisted.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
-        } catch (e) {
-            console.error('Failed to load highlights:', e);
-        }
-    }
     useEffect(() => {
-        loadHighlightsFromFile();
-    }, []);
+        readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig })
+            .then(result => {
+                const persisted = JSON.parse(result) as PersistedHighlightConfig[];
+                setHighlights(persisted.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
+            })
+            .catch(e => console.error('Failed to load highlights:', e));
+    }, [setHighlights]);
 
     const handleAddHighlight = async () => {
         if(highlights == undefined) {

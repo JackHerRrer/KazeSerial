@@ -47,6 +47,10 @@ const darkTheme = createTheme({
 });
 
 /** Generates synthetic UART-style log lines for demo purposes */
+const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
+  listRef.current?.scrollToRow({ align: 'end', behavior, index: rowIndex });
+};
+
 // Ids increase along the log, so a line is found by binary search. Falls back to a linear
 // search in case lines from concurrent sources were appended out of id order.
 const findLogIndex = (lines: SerialMessage[], id: number): number => {
@@ -257,9 +261,6 @@ export default function Home() {
   };
 
 
-  const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
-    listRef.current?.scrollToRow({ align: 'end', behavior, index: rowIndex });
-  };
 
   const onToggleAutoScrollFromLogs = () => {
     setIsMainAutoScrollEnabled((prev) => {
@@ -288,10 +289,11 @@ export default function Home() {
   };
 
   const handleScroll = (
+    event: SyntheticEvent<HTMLDivElement>,
     isAutoScrollEnabled: boolean,
     setIsAutoScrollEnabled: React.Dispatch<React.SetStateAction<boolean>>,
     ignoreScrollUntilRef: React.MutableRefObject<number>
-  ) => (event: SyntheticEvent<HTMLDivElement>) => {
+  ) => {
     if (Date.now() < ignoreScrollUntilRef.current || event.nativeEvent == null) return;
     const target = event.nativeEvent.target as HTMLDivElement;
     const diff = target.scrollHeight - target.clientHeight - target.scrollTop;
@@ -528,7 +530,7 @@ export default function Home() {
                   <SerialTerminal
                     serial_messages={logs}
                     listRef={listRefMain}
-                    onScroll={handleScroll(isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
+                    onScroll={(event) => handleScroll(event, isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
                     selectedLineId={selectedMainLineId}
                     onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
                     lineNumbers={mainLineNumbers}
@@ -657,7 +659,7 @@ export default function Home() {
                 <SerialTerminal
                   serial_messages={focusLogs}
                   listRef={listRefFocus}
-                  onScroll={handleScroll(isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
+                  onScroll={(event) => handleScroll(event, isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
                   onClickRow={onClickFocusLogs}
                   lineNumbers={focusLineNumbers}
                   timestamps={timestamps}

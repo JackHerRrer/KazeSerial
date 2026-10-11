@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
@@ -23,6 +23,18 @@ const SerialSettings: React.FC = () => {
   const [ports, setPorts] = useState<SerialPortEntry[]>([]);
   const [isConnected, setIsConnected] = useState(false);
 
+  // Stable, so the mount effect can list the ports: selects the first port only if none is selected
+  const listUart = useCallback(() => {
+    invoke<SerialPortEntry[]>('list_ports')
+      .then((s) => {
+        setPorts(s);
+        setPort(prev => prev || s[0]?.portName || '');
+      })
+      .catch((err: unknown) => {
+        console.error(err);
+      });
+  }, []);
+
   React.useEffect(() => {
     listUart();
     const unlisten = listen('serial-disconnected', () => {
@@ -31,7 +43,7 @@ const SerialSettings: React.FC = () => {
     return () => {
       unlisten.then(fn => fn());
     };
-  }, []);
+  }, [listUart]);
 
   const handlePortChange = (event: SelectChangeEvent) => {
     setPort(event.target.value as string);
@@ -57,18 +69,6 @@ const SerialSettings: React.FC = () => {
     }
   };
 
-  const listUart = () => {
-    invoke<SerialPortEntry[]>('list_ports')
-      .then((s) => {
-        setPorts(s);
-        if (!port && s[0]?.portName) {
-          setPort(s[0].portName);
-        }
-      })
-      .catch((err: unknown) => {
-        console.error(err);
-      });
-  };
 
   const renderPortLabel = (portEntry: SerialPortEntry) => (
     <Box

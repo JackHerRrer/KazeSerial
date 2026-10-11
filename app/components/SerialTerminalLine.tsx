@@ -48,7 +48,7 @@ export default function RowComponent({
       className="serial-terminal-row"
       // Rows as wide as their content so the sticky gutter stays visible on long lines
       style={{ ...style, width: 'max-content', minWidth: '100%', whiteSpace: 'pre', backgroundColor: isSelected ? SELECTED_ROW_BACKGROUND : undefined, cursor: 'pointer' }}
-      onClick={onClickRow ? (e) => {
+      onClick={onClickRow ? () => {
         if (window.getSelection()?.toString()) return;
         onClickRow(line.id);
       } : undefined}
