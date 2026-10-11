@@ -91,8 +91,10 @@ it to dig through a capture while you keep reproducing the bug.
 
 ### Enabling it
 
-Click the 🤖 button in the log toolbar. The server binds to loopback only and the app prints its
-URL into the log:
+In the **Config** tab of the settings panel, check **Enable MCP server**. The server listens on
+port `9339` by default; change it in the **Port** field next to the checkbox (a running server
+restarts on the new port). The server binds to loopback only, and the app shows its URL under the
+checkbox and prints it into the log:
 
 ```
 [09:03:25] KazeSerial: MCP server listening on http://127.0.0.1:9339/mcp
@@ -104,7 +106,8 @@ Then register it with your agent — for Claude Code:
 claude mcp add --transport http kazeserial http://127.0.0.1:9339/mcp
 ```
 
-To start the server automatically at launch instead of clicking, set `KAZESERIAL_MCP_PORT`
+The server is never started automatically from the settings: it is off at each launch. To start it
+at launch instead of checking the box, set `KAZESERIAL_MCP_PORT`
 (use `0` to let the OS pick a free port):
 
 ```bash
@@ -138,7 +141,8 @@ to the serial port.
 ## Configuration
 
 - **Highlights**: Highlight settings are automatically saved to `highlight_settings.json` in the application configuration directory.
-- **MCP server**: Off by default. `KAZESERIAL_MCP_PORT` starts it at launch; `KAZESERIAL_LOG_CAPACITY` sets the number of lines kept in memory.
+- **Application settings**: Config tab settings (line numbers, timestamps, MCP server port) are saved to `app_config.json` in the same directory.
+- **MCP server**: Off by default, started from the Config tab. `KAZESERIAL_MCP_PORT` starts it at launch; `KAZESERIAL_LOG_CAPACITY` sets the number of lines kept in memory.
 
 ## Background
 Since I work as an embedded software developper, most of my work time consist of looking on serial monitor for debug purpose.

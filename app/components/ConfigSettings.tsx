@@ -6,6 +6,8 @@ import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
+import Divider from '@mui/material/Divider';
+import McpSettings from './McpSettings';
 import { AppConfig } from '../types/AppConfig';
 import { formatTimestamp, TIMESTAMP_FORMATS } from '../utils/timestamp';
 
@@ -126,6 +128,8 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           />
         )}
       </Box>
+      <Divider sx={{ my: 2 }} />
+      <McpSettings port={config.mcpPort} onPortChange={(mcpPort) => onConfigChange({ mcpPort })} />
     </Box>
   );
 };

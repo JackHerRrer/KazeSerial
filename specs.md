@@ -39,7 +39,6 @@ A vertical flex column containing:
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
      - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
      - **Open** (folder icon) — opens a file picker, loads a log file into the main terminal
-     - **MCP** (robot icon) — starts or stops the [MCP server](#mcp-server). Highlighted in green (`rgba(76,175,80,0.28)`) while running; the tooltip then shows the server URL. The state is read with `get_mcp_status` on mount, since the server survives webview reloads
      - **Save** (save icon) — saves the main log to a `.log` file
      - **Delete** (delete icon) — clears the main log and the backend [log store](#log-store), so MCP clients see the same log. Ctrl+Shift+R also clears the focus log
      - **More** (three-dot icon, rightmost) — dropdown menu with demo utilities:
@@ -203,6 +202,8 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | **Include timestamps in copied and saved text** (checkbox, indented) | off | Makes the timestamp column selectable and part of copied and saved text. Disabled while timestamps are hidden |
 | **Only after inactivity** (checkbox, indented) + **Delay (ms)** (number field) | off, 500 | Only shows a timestamp on a line arriving after the delay without any line, see [Timestamps](#timestamps). The field is disabled while the checkbox is off; it accepts integers ≥ 0, saves valid values as typed and shows the saved value again when it loses focus |
 | **Format** (select, indented) | `HH:mm:ss.SSS` | Timestamp format: `HH:mm:ss.SSS`, `HH:mm:ss`, `YYYY-MM-DD HH:mm:ss.SSS` or **Custom…**, which shows a **Pattern** field with the available codes and a preview. *Custom* stays selected while editing, even if the pattern matches a preset. See [Timestamps](#timestamps) for the codes |
+| **Enable MCP server** (checkbox, after a separator) | off | Starts or stops the [MCP server](#mcp-server) with `start_mcp_server` / `stop_mcp_server`. Reflects the real server state, read with `get_mcp_status` on mount (the server survives webview reloads and can be started by `KAZESERIAL_MCP_PORT`). **Not saved**: the server is off at each launch. Shows `Listening on {url}` while running, or the start error (e.g. port in use) |
+| **Port** (number field) | 9339 | MCP server port, 1–65535, saved. Applied on Enter or when the field loses focus: an invalid value is dropped, and a running server is restarted on the new port (`McpSettings` component) |
 
 Settings are held in `page.tsx` through the `useAppConfig` hook, and saved to `app_config.json` in `BaseDirectory.AppConfig` on every change. On mount, the file is read and merged over the defaults (`DEFAULT_APP_CONFIG`), so settings added later get their default value; a missing file keeps the defaults.
 
@@ -500,7 +501,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) giving an AI agent read access to the [log store](#log-store) while the user keeps using the window. User-facing setup is described in the README.
 
 - **Transport**: Streamable HTTP at `http://127.0.0.1:{port}/mcp`, served inside the Tauri process. Bound to loopback only; the `Host` header is checked against loopback names against DNS rebinding.
-- **Lifecycle**: off by default. Started and stopped from the toolbar MCP button, or at launch when `KAZESERIAL_MCP_PORT` is set (`0` picks a free port, printed in the log).
+- **Lifecycle**: off by default, and never started automatically from the settings. Started and stopped from the [Config tab](#config-tab) (**Enable MCP server**, on the saved **Port**), or at launch when `KAZESERIAL_MCP_PORT` is set (`0` picks a free port, printed in the log).
 - **Scope**: read-only apart from `clear_logs`. Nothing can touch the serial port or the files.
 - **Limits**: a call returns at most **20 000** lines; a wait blocks at most **120 s**.
 
@@ -552,6 +553,7 @@ app/
     FileSettings.tsx         — File follow configuration (File tab)
     HighLighSettings.tsx     — Highlight/filter rules table
     ConfigSettings.tsx       — Application settings (Config tab)
+    McpSettings.tsx          — MCP server switch and port (Config tab)
   hooks/
     useAppConfig.ts          — Loads and saves the application settings
   types/

@@ -11,6 +11,8 @@ export type AppConfig = {
   timestampInactivityMs: number;
   // Format of the timestamp column, see formatTimestamp
   timestampFormat: string;
+  // Port of the MCP server; the server itself is never started automatically
+  mcpPort: number;
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -20,4 +22,5 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   timestampsAfterInactivityOnly: false,
   timestampInactivityMs: 500,
   timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
+  mcpPort: 9339,
 };
