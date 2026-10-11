@@ -11,10 +11,15 @@ Kaze Serial is a modern, high-performance serial terminal application built with
 - **Serial Connectivity**:
   - Automatic detection of available serial ports.
   - Configurable baud rates (9600 to 921600).
+  - Automatic reconnection when the device resets or is unplugged, even if it comes back under another port name.
+- **Log files**: open a log file, or follow it as it grows (`tail -f`), from the **File** tab.
 - **High-Performance Logging**:
   - Virtualized log list (using `react-window`) to handle large amounts of data efficiently.
   - Auto-scroll with pause-on-hover/scroll-up capability.
   - Clicking on a row of focus view will scroll the main log view to this element
+  - Optional line numbers, as in a code editor.
+  - Optional timestamps (reception time), with a configurable format, optionally shown only after a pause in the logs
+  - Optional highlight of new lines, fading out
 - **Advanced Analysis**:
   - **Highlighting**: Define custom search patterns to highlight specific log messages with custom colors. Patterns can be:
     - Simple search
@@ -23,12 +28,14 @@ Kaze Serial is a modern, high-performance serial terminal application built with
     - Entire line selection
   - **Split View**: A secondary "Focus" terminal to isolate matched logs or view different parts of the stream.
   - **Sentence removal**: Remove garbage by sentence matching 
+  - **Search** (Ctrl+F): find text or a regex in the main log
+  - **Markers** (Ctrl+M): insert numbered `MARK` lines to delimit parts of the logs
 - **Export/import**:
   - **export**: 
     - Export raw log (without highligh and sentence removal applied) to a file
     - Export the patterns for future use
   - **import**: 
-    - Re-import previous log file
+    - Re-import previous log file (File tab)
     - Re-import previous patterns 
 - **AI agent access (MCP)**: Expose the live log buffer to an AI agent over an embedded MCP server, so it can read the same lines you see while you debug. See [AI agent access (MCP)](#ai-agent-access-mcp).
 - **Cross-Platform**: Runs on Linux and windows, not tested so far on macOS (powered by Tauri).
@@ -125,6 +132,7 @@ KAZESERIAL_MCP_PORT=9339 kazeserial
 | `get_focus_logs` | Only the lines your own "focus" highlight rules matched — high signal. |
 | `get_all_logs` | The complete buffer, paginated. |
 | `wait_for_logs` | Blocks until lines newer than a given id arrive, so the agent can follow a live capture without polling. |
+| `wait_for_pattern` | Blocks until a line matching a substring or regex arrives, instead of sleeping a fixed duration. |
 | `clear_logs` | Clears the buffer in both the agent's view and your window. The only tool that writes anything. |
 
 Line text is always the **raw** line, with no highlight markup. Nothing in this interface can write
@@ -141,7 +149,7 @@ to the serial port.
 ## Configuration
 
 - **Highlights**: Highlight settings are automatically saved to `highlight_settings.json` in the application configuration directory.
-- **Application settings**: Config tab settings (line numbers, timestamps, MCP server port) are saved to `app_config.json` in the same directory.
+- **Application settings**: Config tab settings (line numbers, timestamps, new line highlight, serial auto-reconnect, MCP server port) are saved to `app_config.json` in the same directory.
 - **MCP server**: Off by default, started from the Config tab. `KAZESERIAL_MCP_PORT` starts it at launch; `KAZESERIAL_LOG_CAPACITY` sets the number of lines kept in memory.
 
 ## Background
