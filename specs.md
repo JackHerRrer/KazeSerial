@@ -110,10 +110,20 @@ Enabled by the **Show timestamps** setting of the [Config tab](#config-tab). Sho
 - **Refresh** sends the timestamps back with the raw lines (`add_logs_line` `timestamps`), so reprocessed lines keep them.
 - **Focus terminal**: a focus line is the same message, so it shows the same time.
 - **Only after inactivity**: a line shows its timestamp only if the previous line of the same terminal arrived at least the delay earlier (default 500 ms), or has no timestamp. Each line restarts the delay, so a steady flow of lines closer than the delay shows a single timestamp, on its first line. The gap is measured within each terminal: in the focus terminal, from the previous focus line. Lines hidden by a `remove` + `whole_line` rule count as activity. Implemented by `isTimestampShown` in `utils/timestamp.ts`, shared by the display and Save.
-- **Format**: local time `HH:MM:SS.mmm` (`formatTimestamp` in `utils/timestamp.ts`). The column is 13 characters wide, empty for lines without timestamp. System messages also carry their own UTC `[HH:MM:SS]` in their text, which can differ from the local time shown in the gutter.
+- **Format**: local time, formatted with the **Format** setting (`formatTimestamp` in `utils/timestamp.ts`), `HH:mm:ss.SSS` by default. A format is a pattern where these codes are replaced and any other character is kept as is:
+
+  | Code | Value | Code | Value |
+  |---|---|---|---|
+  | `YYYY` | year, 4 digits | `HH` | hours, 00–23 |
+  | `MM` | month, 01–12 | `mm` | minutes |
+  | `DD` | day of month | `ss` | seconds |
+  | | | `SSS` | milliseconds |
+
+  Codes are case-sensitive (`MM` month, `mm` minutes) and there is no escaping, so a code inside a word is replaced too (the `ss` of `pass`). An empty pattern falls back to the default. All codes are fixed-width, so the column width is the length of the formatted pattern (`timestampWidth`), plus one character for the separating space; it is empty for lines without timestamp.
+- System messages also carry their own UTC `[HH:MM:SS]` in their text, which can differ from the local time shown in the gutter.
 - **Display only** (default): the timestamp is CSS generated content, like the line number: not selectable, not copied, not saved.
-- **In text** (**Include timestamps in copied and saved text**): the timestamp column is real text, so it is selectable and copied: the timestamp followed by a space (`HH:MM:SS.mmm line`), or 13 blanks when the line shows no timestamp (missing or hidden by the inactivity option), so copied lines stay aligned as on screen. Save writes the same column on every line, in both terminals (`timestampColumnText` in `utils/timestamp.ts`). The line number stays out of the selection and the copied text.
-- The terminal receives it through an optional `timestamps` prop (`{ inText, inactivityMs? }`); `inactivityMs` is set only when **Only after inactivity** is checked.
+- **In text** (**Include timestamps in copied and saved text**): the timestamp column is real text, so it is selectable and copied: the timestamp followed by a space (`HH:mm:ss.SSS line`), or blanks of the column width when the line shows no timestamp (missing or hidden by the inactivity option), so copied lines stay aligned as on screen. Save writes the same column on every line, in both terminals (`timestampColumnText` in `utils/timestamp.ts`). The line number stays out of the selection and the copied text.
+- The terminal receives it through an optional `timestamps` prop (`{ inText, inactivityMs?, format, width }`); `inactivityMs` is set only when **Only after inactivity** is checked, `width` is the formatted width of `format`.
 
 ### Auto-scroll
 - When enabled, the list automatically scrolls to the last row when new logs arrive
@@ -192,6 +202,7 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | **Show timestamps** (checkbox) | off | Shows the [reception time](#timestamps) of each line in the main and focus terminals |
 | **Include timestamps in copied and saved text** (checkbox, indented) | off | Makes the timestamp column selectable and part of copied and saved text. Disabled while timestamps are hidden |
 | **Only after inactivity** (checkbox, indented) + **Delay (ms)** (number field) | off, 500 | Only shows a timestamp on a line arriving after the delay without any line, see [Timestamps](#timestamps). The field is disabled while the checkbox is off; it accepts integers ≥ 0, saves valid values as typed and shows the saved value again when it loses focus |
+| **Format** (select, indented) | `HH:mm:ss.SSS` | Timestamp format: `HH:mm:ss.SSS`, `HH:mm:ss`, `YYYY-MM-DD HH:mm:ss.SSS` or **Custom…**, which shows a **Pattern** field with the available codes and a preview. *Custom* stays selected while editing, even if the pattern matches a preset. See [Timestamps](#timestamps) for the codes |
 
 Settings are held in `page.tsx` through the `useAppConfig` hook, and saved to `app_config.json` in `BaseDirectory.AppConfig` on every change. On mount, the file is read and merged over the defaults (`DEFAULT_APP_CONFIG`), so settings added later get their default value; a missing file keeps the defaults.
 

@@ -14,11 +14,14 @@ export type LineNumbers = {
 
 /**
  * Timestamp column; `inText` makes it selectable and part of the copied text, `inactivityMs`
- * only shows it on lines arriving after that long without any line
+ * only shows it on lines arriving after that long without any line. `width` is the width of a
+ * timestamp formatted with `format`, in characters.
  */
 export type Timestamps = {
   inText: boolean;
   inactivityMs?: number;
+  format: string;
+  width: number;
 };
 
 interface SerialTerminalProps {

@@ -5,7 +5,13 @@ import Box from '@mui/material/Box';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
 import { AppConfig } from '../types/AppConfig';
+import { formatTimestamp, TIMESTAMP_FORMATS } from '../utils/timestamp';
+
+const CUSTOM_FORMAT = 'custom';
+// Fixed time used to preview a custom pattern
+const PREVIEW_TIME = new Date(2026, 9, 9, 14, 3, 27, 512).getTime();
 
 interface ConfigSettingsProps {
   config: AppConfig;
@@ -16,6 +22,16 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
   // Text being typed in the delay field; valid values are saved as typed, the field shows the
   // saved value again once it loses focus
   const [delayDraft, setDelayDraft] = useState<string | null>(null);
+  // "Custom" stays selected while editing, even if the typed pattern matches a preset
+  const [customFormat, setCustomFormat] = useState(false);
+  const isCustomFormat = customFormat || !TIMESTAMP_FORMATS.includes(config.timestampFormat);
+
+  const onFormatSelect = (value: string) => {
+    setCustomFormat(value === CUSTOM_FORMAT);
+    if (value !== CUSTOM_FORMAT) {
+      onConfigChange({ timestampFormat: value });
+    }
+  };
 
   const onDelayChange = (text: string) => {
     setDelayDraft(text);
@@ -82,6 +98,33 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           slotProps={{ htmlInput: { min: 0, step: 100 } }}
           sx={{ width: 120 }}
         />
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, pl: 3, pt: 1, flexWrap: 'wrap' }}>
+        <TextField
+          select
+          label="Format"
+          size="small"
+          value={isCustomFormat ? CUSTOM_FORMAT : config.timestampFormat}
+          disabled={!config.showTimestamps}
+          onChange={(e) => onFormatSelect(e.target.value)}
+          sx={{ minWidth: 220 }}
+        >
+          {TIMESTAMP_FORMATS.map(format => (
+            <MenuItem key={format} value={format}>{format}</MenuItem>
+          ))}
+          <MenuItem value={CUSTOM_FORMAT}>Custom…</MenuItem>
+        </TextField>
+        {isCustomFormat && (
+          <TextField
+            label="Pattern"
+            size="small"
+            value={config.timestampFormat}
+            disabled={!config.showTimestamps}
+            onChange={(e) => onConfigChange({ timestampFormat: e.target.value })}
+            helperText={`YYYY MM DD HH mm ss SSS — e.g. ${formatTimestamp(PREVIEW_TIME, config.timestampFormat)}`}
+            sx={{ minWidth: 220 }}
+          />
+        )}
       </Box>
     </Box>
   );

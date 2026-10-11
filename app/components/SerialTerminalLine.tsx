@@ -5,7 +5,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { SerialMessage } from "../types/SerialMessage";
 import { type LineNumbers, type Timestamps } from "./SerialTerminal";
-import { formatTimestamp, isTimestampShown, timestampColumnText, TIMESTAMP_WIDTH } from "../utils/timestamp";
+import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils/timestamp";
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
 
@@ -27,7 +27,7 @@ export default function RowComponent({
   const line = serialMessages[index];
   const isSelected = selectedLineId === line.id;
   const timestamp = timestamps && line.timestamp != null && isTimestampShown(serialMessages, index, timestamps.inactivityMs)
-    ? formatTimestamp(line.timestamp)
+    ? formatTimestamp(line.timestamp, timestamps.format)
     : '';
   // Shared by the gutter boxes, sticky on the left so text scrolled horizontally passes under them
   const gutterSx = {
@@ -75,8 +75,8 @@ export default function RowComponent({
       )}
       {timestamps && (timestamps.inText ? (
         // Real text, so it is selectable and copied
-        <Box component="span" sx={{ ...gutterSx, left: timestampLeft, width: `${TIMESTAMP_WIDTH + 1}ch` }}>
-          {timestampColumnText(timestamp)}
+        <Box component="span" sx={{ ...gutterSx, left: timestampLeft, width: `${timestamps.width + 1}ch` }}>
+          {timestampColumnText(timestamp, timestamps.width)}
         </Box>
       ) : (
         <Box
@@ -86,7 +86,7 @@ export default function RowComponent({
           sx={{
             ...gutterSx,
             left: timestampLeft,
-            width: `${TIMESTAMP_WIDTH + 1}ch`,
+            width: `${timestamps.width + 1}ch`,
             userSelect: 'none',
             '&::before': { content: 'attr(data-timestamp)' },
           }}

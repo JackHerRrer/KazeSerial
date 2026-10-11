@@ -27,7 +27,7 @@ import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal, { type LineNumbers, type Timestamps } from './components/SerialTerminal';
-import { formatTimestamp, isTimestampShown, timestampColumnText } from './utils/timestamp';
+import { formatTimestamp, isTimestampShown, timestampColumnText, timestampWidth } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
 import { SerialMessage } from './types/SerialMessage';
 
@@ -163,6 +163,8 @@ export default function Home() {
     ? {
       inText: config.timestampsInText,
       inactivityMs: config.timestampsAfterInactivityOnly ? config.timestampInactivityMs : undefined,
+      format: config.timestampFormat,
+      width: timestampWidth(config.timestampFormat),
     }
     : undefined;
 
@@ -173,9 +175,9 @@ export default function Home() {
     const text = msg.rawline ?? msg.message;
     if (!timestamps?.inText) return text;
     const timestamp = msg.timestamp != null && isTimestampShown(lines, index, timestamps.inactivityMs)
-      ? formatTimestamp(msg.timestamp)
+      ? formatTimestamp(msg.timestamp, timestamps.format)
       : '';
-    return timestampColumnText(timestamp) + text;
+    return timestampColumnText(timestamp, timestamps.width) + text;
   };
 
   // Re-apply current highlight rules to all existing raw lines
