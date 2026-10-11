@@ -38,7 +38,6 @@ A vertical flex column containing:
    - Toolbar (top-right overlay, left to right):
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
      - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
-     - **Open** (folder icon) — opens a file picker, loads a log file into the main terminal
      - **Save** (save icon) — saves the main log to a `.log` file
      - **Delete** (delete icon) — clears the main log and the backend [log store](#log-store), so MCP clients see the same log. Ctrl+Shift+R also clears the focus log
      - **More** (three-dot icon, rightmost) — dropdown menu with demo utilities:
@@ -87,7 +86,7 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 ### Line numbers
 Enabled by the **Show line numbers** setting of the [Config tab](#config-tab). Like in a code editor, a gutter on the left of each row shows its line number.
 
-- **Main terminal**: the position of the line in the main log, starting at 1. Lines hidden by a `remove` + `whole_line` rule are counted, so the numbering skips them and a number always designates the same line whatever the rules. It restarts at 1 when the log is cleared or replaced by a file load; Refresh keeps the same numbers.
+- **Main terminal**: the position of the line in the main log, starting at 1. Lines hidden by a `remove` + `whole_line` rule are counted, so the numbering skips them and a number always designates the same line whatever the rules. It restarts at 1 when the log is cleared or replaced by an opened file; Refresh keeps the same numbers.
 - **Focus terminal**: the number of the same line in the main log, found by id (binary search, since ids increase along the log, with a linear search as fallback). Empty when that line is no longer in the main log.
 - **Rendering**: the number is CSS generated content (`::before { content: attr(data-line-number) }`), so it is neither selectable nor part of copied text, and Save never includes it. The gutter is right-aligned, gray (`#545a62`), as wide as the largest number of the main log plus 2 characters, and `position: sticky` on the left with an opaque background so text scrolled horizontally passes under it. It follows the selected row highlight.
 - **Separate gutter boxes**: the line number and the timestamp are two sibling sticky boxes, never one shared container. WebKit (the Tauri webview on Linux) fills the selection gap before selected text up to the start of its box: with a selectable timestamp in the same box, a multi-line selection painted over the line number. Copied text was not affected.
@@ -104,7 +103,7 @@ Enabled by the **Show timestamps** setting of the [Config tab](#config-tab). Sho
   | Followed file, appended lines | when the line is detected |
   | System messages | when emitted |
   | Demo append (`append_logs_line`) | when appended |
-  | Loaded file, initial content of a followed file, Demo regenerate | none (`null`), the real time is unknown |
+  | Opened file (`open_file`), initial content of a followed file, Demo regenerate | none (`null`), the real time is unknown |
 
 - **Refresh** sends the timestamps back with the raw lines (`add_logs_line` `timestamps`), so reprocessed lines keep them.
 - **Focus terminal**: a focus line is the same message, so it shows the same time.
@@ -152,7 +151,7 @@ type SerialMessage = {
   matched: boolean;     // true if matched a focus rule
   rawline?: string;     // original unprocessed line (present if a rule matched or message differs from it)
   removed_line?: boolean; // true if the whole line was removed
-  timestamp?: number | null; // reception time in ms since the Unix epoch, null when unknown (loaded file)
+  timestamp?: number | null; // reception time in ms since the Unix epoch, null when unknown (opened file)
 };
 ```
 
@@ -177,12 +176,15 @@ Serial port configuration:
 - **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly.
 
 #### File tab
-`FileSettings` component, a single row:
-- **Select button** (folder icon) — opens a file picker and shows the chosen path in the field. It does not start following.
-- **File field** — read-only, shows the chosen path, truncated with an ellipsis; the full path is shown on hover.
-- **Follow / Stop button** — calls `watch_file` with the chosen path, or `stop_file_watch`. The button state (`isFileWatching`) is set to `true` only in the `.then()` callback of `watch_file`, and to `false` on Stop or upon receiving a `file-watch-stopped` event.
+`FileSettings` component, two rows:
+1. **Select button** (folder icon) and **File field**:
+   - **Select button** — opens a file picker and shows the chosen path in the field. It neither opens nor follows the file.
+   - **File field** — read-only, shows the chosen path, truncated with an ellipsis; the full path is shown on hover.
+2. **Open** and **Follow / Stop** buttons, sharing the width:
+   - **Open** — calls `open_file`: the file is read once and its lines replace the logs. Read and split like a followed file, except that the last line is kept even without a trailing newline.
+   - **Follow / Stop** — calls `watch_file` with the chosen path, or `stop_file_watch`. The button state (`isFileWatching`) is set to `true` only in the `.then()` callback of `watch_file`, and to `false` on Stop or upon receiving a `file-watch-stopped` event.
 
-While following, the select button and the file field are disabled. Follow is disabled until a file is chosen. See [File Follow](#file-follow-tail--f) for the backend behavior.
+Open and Follow are disabled until a file is chosen. While following, the select button, the file field and Open are disabled (following would keep appending to an opened file). See [File Follow](#file-follow-tail--f) for the backend behavior.
 
 ### Settings tabs (bottom, scrollable)
 Occupy the remaining height of the panel. The content of the active tab scrolls vertically.
@@ -227,7 +229,7 @@ Follows a file as it grows, like `tail -f`. Started from the [File tab](#file-ta
 - **Encoding**: the file is decoded as UTF-8. A character cut between two reads is completed on the next one; invalid bytes are replaced with `U+FFFD`.
 - **Stop**: on user request or missing file, the loop exits, emits `file-watch-stopped` and resets the log store source to `file` if it still points to the followed file.
 
-Line splitting and decoding live in `tail_splitter.rs` (`TailSplitter`, `decode_utf8`).
+Line splitting and decoding live in `tail_splitter.rs` (`TailSplitter`, `decode_utf8`); `TailSplitter::finish` returns the unterminated last line for `open_file`.
 
 ---
 
@@ -382,8 +384,11 @@ Stops the MCP server and its sessions. Emits the system message `MCP server stop
 #### `get_mcp_status() -> McpStatus`
 Returns `{ running, url, port }`.
 
-#### `add_logs_line(lines: Vec<String>, source?: String, timestamps?: Vec<Option<u64>>)`
-`source` sets the log store source to `file` (file load). `timestamps` gives the reception time of each line, used by Refresh to keep them; without it, lines have no timestamp. Processes a batch of raw lines through `parse_log_line` and emits:
+#### `open_file(path)`
+Reads the file once and replaces the logs with its lines (`serial-datas` / `serial-datas-focus`), without timestamps. The file is decoded as UTF-8 (invalid bytes replaced with `U+FFFD`) and split like a [followed file](#file-follow-tail--f) (`\n` separator, trailing `\r` stripped, empty lines kept); the last line is kept even without a trailing newline. Sets the log store source to `file`. Returns an error if the file cannot be read.
+
+#### `add_logs_line(lines: Vec<String>, timestamps?: Vec<Option<u64>>)`
+Used by Refresh and Demo regenerate. `timestamps` gives the reception time of each line, used by Refresh to keep them; without it, lines have no timestamp. Processes a batch of raw lines through `parse_log_line` and emits:
 - `serial-datas` — all processed lines
 - `serial-datas-focus` — only lines that matched a focus rule
 
@@ -491,7 +496,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 
 - Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), and its `focus` / `removed` flags.
 - It is a ring buffer: past the capacity (default **500 000** lines, `KAZESERIAL_LOG_CAPACITY` to override), the oldest lines are evicted and counted as dropped.
-- It tracks the current source: `none`, `serial`, `file` (loaded once) or `file_watch` (followed).
+- It tracks the current source: `none`, `serial`, `file` (opened once with `open_file`) or `file_watch` (followed).
 - Appends wake up waiting MCP calls, so `wait_for_logs` and `wait_for_pattern` block instead of polling.
 
 ---

@@ -30,6 +30,12 @@ impl TailSplitter {
             .map(|line| display_text(line).to_string())
             .collect()
     }
+
+    /// Text received after the last `\n`, as a last line, when no more text will come
+    /// (file opened once rather than followed).
+    pub fn finish(self) -> Option<String> {
+        (!self.pending.is_empty()).then(|| display_text(&self.pending).to_string())
+    }
 }
 
 /// Decodes `bytes` as UTF-8 and returns the text with the number of bytes consumed.
@@ -89,6 +95,17 @@ mod tests {
         let mut splitter = TailSplitter::default();
         assert_eq!(splitter.feed("a\n\nb\n"), lines(&["a", "", "b"]));
         assert_eq!(splitter.feed("\n"), lines(&[""]));
+    }
+
+    #[test]
+    fn finish_returns_the_unterminated_last_line() {
+        let mut splitter = TailSplitter::default();
+        assert_eq!(splitter.feed("a\nlast\r"), lines(&["a"]));
+        assert_eq!(splitter.finish(), Some("last".to_string()));
+
+        let mut splitter = TailSplitter::default();
+        splitter.feed("a\n");
+        assert_eq!(splitter.finish(), None);
     }
 
     #[test]

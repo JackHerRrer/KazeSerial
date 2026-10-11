@@ -541,19 +541,10 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
 #[tauri::command]
 async fn add_logs_line(
     lines: Vec<String>,
-    source: Option<String>,
-    // Reception times to keep when reprocessing (Refresh); `None` for a loaded file
+    // Reception times to keep when reprocessing (Refresh); `None` for generated lines
     timestamps: Option<Vec<Option<u64>>>,
     emitter: tauri::AppHandle,
 ) -> Result<(), String> {
-    if let Some(path) = source {
-        emitter
-            .state::<AppState>()
-            .log_store
-            .set_source(LogSource::File { path })
-            .await;
-    }
-
     let mut timestamps = timestamps.unwrap_or_default().into_iter();
     let lines = lines
         .into_iter()
@@ -818,6 +809,26 @@ async fn clear_logs(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens a file once: its lines replace the logs. Decoded and split like a followed file,
+/// except that the last line is kept even without a trailing newline.
+#[tauri::command]
+async fn open_file(
+    path: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let mut splitter = TailSplitter::default();
+    let mut lines = splitter.feed(&String::from_utf8_lossy(&bytes));
+    lines.extend(splitter.finish());
+
+    state.log_store.set_source(LogSource::File { path }).await;
+    // The real reception time of a file's lines is unknown
+    let results = process_batch(&app, with_timestamp(lines, None)).await;
+    publish_replace(&app, results).await;
+    Ok(())
+}
+
 #[tauri::command]
 async fn watch_file(
     path: String,
@@ -1045,6 +1056,7 @@ pub fn run() {
             add_logs_line,
             append_logs_line,
             clear_logs,
+            open_file,
             watch_file,
             stop_file_watch,
             start_mcp_server,
