@@ -15,6 +15,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
+import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
 import SaveIcon from '@mui/icons-material/Save';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import LastPageIcon from '@mui/icons-material/LastPage';
@@ -156,6 +157,18 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openSearch]);
 
+  // Ctrl+M appends a marker line, e.g. to delimit a reproduction attempt
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
+        e.preventDefault();
+        invoke<void>('add_marker').catch((err: unknown) => console.error(err));
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Click on a focus row: scroll the main terminal to the matching line and highlight it
   const onClickFocusLogs = (id: number) => {
     const index = logs.findIndex(log => log.id === id);
@@ -211,9 +224,10 @@ export default function Home() {
     const rawLines = logs.map(log => log.rawline ?? log.message);
     clearFocusLogs();
     clearLogs();
-    // Reception times are sent back so reprocessed lines keep them
+    // Reception times and markers are sent back so reprocessed lines keep them
     const timestamps = logs.map(log => log.timestamp ?? null);
-    invoke<void>('add_logs_line', { lines: rawLines, timestamps })
+    const markers = logs.map(log => log.marker ?? false);
+    invoke<void>('add_logs_line', { lines: rawLines, timestamps, markers })
       .catch((err: unknown) => console.error(err));
   };
 
@@ -434,6 +448,25 @@ export default function Home() {
                       }}
                     >
                       <RefreshIcon fontSize="medium" />
+                    </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Insert a marker (Ctrl+M)" placement="top" arrow>
+                    <IconButton
+                      aria-label="insert marker"
+                      size="medium"
+                      color="inherit"
+                      onClick={() => invoke<void>('add_marker').catch((err: unknown) => console.error(err))}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <BookmarkAddOutlinedIcon fontSize="medium" />
                     </IconButton>
                     </Tooltip>
                     <Tooltip title="Save logs to file" placement="top" arrow>

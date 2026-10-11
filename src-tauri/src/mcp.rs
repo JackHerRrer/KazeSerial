@@ -22,7 +22,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use rmcp::{ErrorData, ServerHandler, tool, tool_router};
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 
 use crate::log_store::{LogRecord, LogStore, SearchOptions, build_matcher};
@@ -529,6 +529,7 @@ impl KazeMcp {
     async fn clear_logs(&self) -> Json<ClearOutput> {
         let stats = self.store.stats().await;
         self.store.clear().await;
+        self.app.state::<crate::AppState>().reset_markers();
         // Keep the user's window in sync with what the agent just did.
         let _ = self.app.emit("logs-cleared", ());
         Json(ClearOutput {

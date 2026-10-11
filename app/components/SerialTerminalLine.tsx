@@ -10,6 +10,9 @@ import { domRanges, highlightNamed, lineRanges } from "../utils/search";
 import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils/timestamp";
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
+// Marker lines: text color, and a light tint of it as row background
+const MARKER_COLOR = '#c586c0';
+const MARKER_BACKGROUND = 'rgba(197,134,192,0.12)';
 
 export default function RowComponent({
   index,
@@ -94,7 +97,7 @@ export default function RowComponent({
       ref={rowRef}
       className="serial-terminal-row"
       // Rows as wide as their content so the sticky gutter stays visible on long lines
-      style={{ ...style, width: 'max-content', minWidth: '100%', whiteSpace: 'pre', backgroundColor: isSelected ? SELECTED_ROW_BACKGROUND : undefined, cursor: 'pointer' }}
+      style={{ ...style, width: 'max-content', minWidth: '100%', whiteSpace: 'pre', backgroundColor: isSelected ? SELECTED_ROW_BACKGROUND : line.marker ? MARKER_BACKGROUND : undefined, cursor: 'pointer' }}
       onClick={onClickRow ? () => {
         if (window.getSelection()?.toString()) return;
         onClickRow(line.id);
@@ -145,7 +148,8 @@ export default function RowComponent({
         sx={{
           fontFamily: 'monospace',
           fontSize: '0.875rem',
-          color: '#d4d4d4',
+          color: line.marker ? MARKER_COLOR : '#d4d4d4',
+          fontWeight: line.marker ? 'bold' : undefined,
           lineHeight: 1.2,
         }}
         dangerouslySetInnerHTML={{ __html: line.message }}

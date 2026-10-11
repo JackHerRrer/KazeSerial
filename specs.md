@@ -39,6 +39,7 @@ A vertical flex column containing:
      - **Search** (magnifier icon) — opens or closes the [search bar](#search) (also Ctrl+F); highlighted in blue while open
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
      - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
+     - **Insert marker** (bookmark icon) — appends a [marker line](#markers) (also Ctrl+M)
      - **Save** (save icon) — saves the main log to a `.log` file
      - **Delete** (delete icon) — clears the main log and the backend [log store](#log-store), so MCP clients see the same log. Ctrl+Shift+R also clears the focus log
      - **More** (three-dot icon, rightmost) — dropdown menu with demo utilities:
@@ -144,6 +145,13 @@ Search in the main terminal, like the find widget of a code editor.
 - **Performance**: match ranges are cached per line and regex (`lineRanges`, `WeakMap` keyed by message), so when lines arrive only the new ones are scanned. The match list is rebuilt from the cache on every log change while the bar is open.
 - **Scope**: the main terminal only, not the focus terminal.
 
+### Markers
+A marker is a numbered line inserted by the user to delimit a part of the log, e.g. a reproduction attempt.
+
+- **Insertion**: Ctrl+M or the toolbar **Insert marker** button calls `add_marker`, which appends `----- MARK n -----` at the end of the log (`n` starts at 1 and increases with each marker; clearing the logs, with the Clear button, Ctrl+Shift+R or the MCP `clear_logs` tool, starts it again at 1). The line gets a reception timestamp.
+- **Style**: bold violet text (`#c586c0`) on a light tint of it (`rgba(197,134,192,0.12)`), unless the row is selected.
+- **Behavior**: a marker is not processed by the highlight rules (`marker_payload`, text HTML-escaped). It is flagged `matched`, so it also appears in the focus terminal and delimits the focus lines. It is recorded in the log store (visible to MCP clients) and written by Save like any line. Refresh sends the marker flags back (`add_logs_line` `markers`), so markers stay markers. To go back to a marker, search for `MARK`.
+
 ### Auto-scroll
 - When enabled, the list automatically scrolls to the last row when new logs arrive
 - Scrolling up manually disables auto-scroll (detected when `scrollHeight - clientHeight - scrollTop > 30`)
@@ -174,6 +182,7 @@ type SerialMessage = {
   removed_line?: boolean; // true if the whole line was removed
   timestamp?: number | null; // reception time in ms since the Unix epoch, null when unknown (opened file)
   arrivedAt?: number;   // frontend time an appended line was added to the view, for the new line highlight
+  marker?: boolean;     // marker line inserted by the user (Ctrl+M)
 };
 ```
 
@@ -364,6 +373,7 @@ struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     message_id_counter: Arc<AtomicU64>,
+    marker_counter: Arc<AtomicU64>,    // number of the last marker inserted
     file_watch_active: Arc<AtomicBool>,
     log_store: Arc<LogStore>,          // copy of every emitted line, served by MCP
     serial_connected: Arc<AtomicBool>, // lock-free mirror of serial_connection.is_some()
@@ -407,7 +417,7 @@ Drops the serial port connection. Emits a system message: `[HH:MM:SS] KazeSerial
 Compiles and stores highlight rules. Validates regexes (invalid rules are skipped). Converts the `advanced_selections` field into `AdvancedSelectionSetting` structs (parsing comma-separated group numbers).
 
 #### `clear_logs()`
-Clears the [log store](#log-store). Called when the user clears the main log (Clear button or Ctrl+Shift+R). Unlike the MCP `clear_logs` tool, it does not emit `logs-cleared`, so the focus panel is left as the user chose.
+Clears the [log store](#log-store) and resets the marker numbering. Called when the user clears the main log (Clear button or Ctrl+Shift+R). Unlike the MCP `clear_logs` tool, it does not emit `logs-cleared`, so the focus panel is left as the user chose.
 
 #### `watch_file(path)`
 Stops any running file follow, reads the file, replaces the logs with its lines, then spawns the follow loop described in [File Follow](#file-follow-tail--f). Returns an error if the file cannot be read.
@@ -424,11 +434,14 @@ Stops the MCP server and its sessions. Emits the system message `MCP server stop
 #### `get_mcp_status() -> McpStatus`
 Returns `{ running, url, port }`.
 
+#### `add_marker()`
+Appends a numbered marker line `----- MARK n -----` (`marker_counter`) as a `serial-data` event, with a reception timestamp, see [Markers](#markers).
+
 #### `open_file(path)`
 Reads the file once and replaces the logs with its lines (`serial-datas` / `serial-datas-focus`), without timestamps. The file is decoded as UTF-8 (invalid bytes replaced with `U+FFFD`) and split like a [followed file](#file-follow-tail--f) (`\n` separator, trailing `\r` stripped, empty lines kept); the last line is kept even without a trailing newline. Sets the log store source to `file`. Returns an error if the file cannot be read.
 
-#### `add_logs_line(lines: Vec<String>, timestamps?: Vec<Option<u64>>)`
-Used by Refresh and Demo regenerate. `timestamps` gives the reception time of each line, used by Refresh to keep them; without it, lines have no timestamp. Processes a batch of raw lines through `parse_log_line` and emits:
+#### `add_logs_line(lines: Vec<String>, timestamps?: Vec<Option<u64>>, markers?: Vec<bool>)`
+Used by Refresh and Demo regenerate. `timestamps` gives the reception time of each line, used by Refresh to keep them; without it, lines have no timestamp. `markers` flags the lines that are markers, rebuilt as markers instead of being processed by the rules. Processes a batch of raw lines through `parse_log_line` and emits:
 - `serial-datas` — all processed lines
 - `serial-datas-focus` — only lines that matched a focus rule
 
@@ -467,6 +480,7 @@ struct Payload {
     rawline: Option<String>,
     removed_line: bool,
     timestamp: Option<u64>, // reception time in ms since the Unix epoch, None when unknown
+    marker: bool,           // marker line, see Markers
 }
 ```
 
@@ -564,7 +578,7 @@ Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) 
 | `search_logs(pattern, is_regex=false, ignore_case=true, limit=100, context_before, context_after, from_id, to_id)` | Matching lines with optional context lines (at most 500 each side) |
 | `wait_for_logs(after_id, timeout_ms=15000, max_lines=500)` | Blocks until lines with `id > after_id` arrive; returns them with the new `last_id` |
 | `wait_for_pattern(after_id, pattern, is_regex=false, ignore_case=true, skip_occurrences=0, timeout_ms=15000)` | Blocks until a line with `id > after_id` matches, after skipping `skip_occurrences` matches; returns it with the new `last_id` |
-| `clear_logs` | Clears the store and emits `logs-cleared` so the window is cleared too |
+| `clear_logs` | Clears the store, resets the marker numbering, and emits `logs-cleared` so the window is cleared too |
 
 Line ids are stable within a session and never reused.
 

@@ -91,6 +91,22 @@ struct Payload {
     /// Reception time in milliseconds since the Unix epoch; `None` for lines read from a
     /// loaded file, whose real time is unknown.
     timestamp: Option<u64>,
+    /// Marker line inserted by the user to delimit a part of the log, see [`marker_payload`].
+    marker: bool,
+}
+
+/// Marker line: shown as is, not processed by the highlight rules, and listed in the focus panel
+/// too so it delimits the focus lines as well.
+fn marker_payload(text: String, id: u64, timestamp: Option<u64>) -> Payload {
+    Payload {
+        id,
+        message: html_escape(&text),
+        matched: true,
+        rawline: Some(text),
+        removed_line: false,
+        timestamp,
+        marker: true,
+    }
 }
 
 /// Current time in milliseconds since the Unix epoch, used as a line reception time.
@@ -144,6 +160,8 @@ struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     message_id_counter: Arc<AtomicU64>,
+    /// Number of the last marker inserted, so markers are numbered 1, 2, 3...
+    marker_counter: Arc<AtomicU64>,
     file_watch_active: Arc<AtomicBool>,
     /// Every emitted line is recorded here so the MCP server can serve the same
     /// log the user sees. The webview state is no longer the only copy.
@@ -155,6 +173,13 @@ struct AppState {
     /// reconnect stops when its session has been replaced or closed.
     serial_session: Arc<AtomicU64>,
     mcp_server: Arc<Mutex<Option<mcp::McpServerHandle>>>,
+}
+
+impl AppState {
+    /// Called when the logs are cleared: the next marker is numbered 1 again.
+    fn reset_markers(&self) {
+        self.marker_counter.store(0, Ordering::SeqCst);
+    }
 }
 
 /// Derives a store record from an emitted payload. `rawline` carries the untouched
@@ -529,6 +554,7 @@ fn process_line(
         rawline,
         removed_line,
         timestamp,
+        marker: false,
     }
 }
 
@@ -546,6 +572,8 @@ async fn add_logs_line(
     lines: Vec<String>,
     // Reception times to keep when reprocessing (Refresh); `None` for generated lines
     timestamps: Option<Vec<Option<u64>>>,
+    // Lines that are markers, kept as markers when reprocessing (Refresh)
+    markers: Option<Vec<bool>>,
     emitter: tauri::AppHandle,
 ) -> Result<(), String> {
     let mut timestamps = timestamps.unwrap_or_default().into_iter();
@@ -553,8 +581,27 @@ async fn add_logs_line(
         .into_iter()
         .map(|line| (line, timestamps.next().flatten()))
         .collect();
-    let results = process_batch(&emitter, lines).await;
+    let mut markers = markers.unwrap_or_default().into_iter();
+    let results = process_batch(&emitter, lines)
+        .await
+        .into_iter()
+        .map(|payload| match markers.next() {
+            Some(true) => marker_payload(payload.rawline.unwrap_or(payload.message), payload.id, payload.timestamp),
+            _ => payload,
+        })
+        .collect();
     publish_replace(&emitter, results).await;
+    Ok(())
+}
+
+/// Appends a numbered marker line (`----- MARK 1 -----`) to delimit a part of the log, e.g. a
+/// reproduction attempt.
+#[tauri::command]
+async fn add_marker(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let number = state.marker_counter.fetch_add(1, Ordering::SeqCst) + 1;
+    let id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
+    let payload = marker_payload(format!("----- MARK {} -----", number), id, Some(now_ms()));
+    publish_one(&app, payload).await;
     Ok(())
 }
 
@@ -751,6 +798,7 @@ async fn open_port(
                                             rawline:None,
                                             removed_line: false,
                                             timestamp: Some(now_ms()),
+                                            marker: false,
                                         },
                                     ).await;
                                     continue;
@@ -947,6 +995,7 @@ async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
 #[tauri::command]
 async fn clear_logs(state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.log_store.clear().await;
+    state.reset_markers();
     Ok(())
 }
 
@@ -1159,6 +1208,7 @@ pub fn run() {
         serial_connection: Arc::new(Mutex::new(None)),
         highlights: Arc::new(Mutex::new(Vec::new())),
         message_id_counter: Arc::new(AtomicU64::new(1)),
+        marker_counter: Arc::new(AtomicU64::new(0)),
         file_watch_active: Arc::new(AtomicBool::new(false)),
         log_store: Arc::new(LogStore::new()),
         serial_connected: Arc::new(AtomicBool::new(false)),
@@ -1198,6 +1248,7 @@ pub fn run() {
             add_logs_line,
             append_logs_line,
             clear_logs,
+            add_marker,
             open_file,
             watch_file,
             stop_file_watch,
@@ -1549,6 +1600,15 @@ mod process_line_tests {
     fn multibyte_characters_are_kept_intact() {
         let payload = process("été ° ok", vec![rule("t", R), remove(rule("°", G))]);
         assert_eq!(rendered(&payload.message), "é{R:t}é  ok");
+    }
+
+    #[test]
+    fn marker_is_escaped_and_listed_in_focus() {
+        let payload = marker_payload("<MARK>".to_string(), 3, Some(7));
+        assert_eq!(payload.message, "&lt;MARK&gt;");
+        assert_eq!(payload.rawline.as_deref(), Some("<MARK>"));
+        assert!(payload.marker && payload.matched && !payload.removed_line);
+        assert_eq!((payload.id, payload.timestamp), (3, Some(7)));
     }
 
     #[test]
