@@ -17,6 +17,12 @@ export type LineNumbers = {
  * only shows it on lines arriving after that long without any line. `width` is the width of a
  * timestamp formatted with `format`, in characters.
  */
+/** New line highlight: lines appended to the view fade from `color` over `durationMs` */
+export type Arrival = {
+  durationMs: number;
+  color: string;
+};
+
 export type Timestamps = {
   inText: boolean;
   inactivityMs?: number;
@@ -34,6 +40,7 @@ interface SerialTerminalProps {
   selectedLineId?: number | null;
   lineNumbers?: LineNumbers;
   timestamps?: Timestamps;
+  arrival?: Arrival;
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
@@ -46,6 +53,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   selectedLineId: externalSelectedLineId,
   lineNumbers,
   timestamps,
+  arrival,
 }) => {
   const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
 
@@ -106,7 +114,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
             return line?.removed_line ? 0 : 20;
           }}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers, timestamps }}
+          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers, timestamps, arrival }}
           overscanCount={10}
           listRef={listRef}
           onScroll={onScroll}

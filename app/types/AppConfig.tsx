@@ -13,6 +13,10 @@ export type AppConfig = {
   timestampFormat: string;
   // Port of the MCP server; the server itself is never started automatically
   mcpPort: number;
+  // New lines get a background highlight fading out over `newLineHighlightMs`
+  highlightNewLines: boolean;
+  newLineHighlightMs: number;
+  newLineHighlightColor: string; // #rrggbbaa, the alpha sets how visible it is
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -23,4 +27,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   timestampInactivityMs: 500,
   timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
   mcpPort: 9339,
+  highlightNewLines: false,
+  newLineHighlightMs: 3000,
+  newLineHighlightColor: '#7896b429',
 };

@@ -1,10 +1,11 @@
 'use client';
 
+import { useLayoutEffect, useRef } from "react";
 import { type RowComponentProps } from "react-window";
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { SerialMessage } from "../types/SerialMessage";
-import { type LineNumbers, type Timestamps } from "./SerialTerminal";
+import { type Arrival, type LineNumbers, type Timestamps } from "./SerialTerminal";
 import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils/timestamp";
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
@@ -17,14 +18,37 @@ export default function RowComponent({
   selectedLineId,
   lineNumbers,
   timestamps,
+  arrival,
 }: RowComponentProps<{
   serialMessages: SerialMessage[];
   onClickRow?: (message_id: number) => void;
   selectedLineId?: number | null;
   lineNumbers?: LineNumbers;
   timestamps?: Timestamps;
+  arrival?: Arrival;
 }>) {
   const line = serialMessages[index];
+  const rowRef = useRef<HTMLDivElement>(null);
+  const arrivalMs = arrival?.durationMs;
+  const arrivalColor = arrival?.color;
+
+  // New line highlight. Rows are only rendered while visible, so the fade is computed from the
+  // line arrival time: a negative delay resumes it where it is when the row is (re)mounted.
+  // The tint is an inset shadow, so it never hides the selection background.
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row || arrivalMs === undefined || arrivalColor === undefined || line.arrivedAt === undefined) return;
+    const elapsed = Date.now() - line.arrivedAt;
+    if (elapsed >= arrivalMs) return;
+    const animation = row.animate(
+      [
+        { boxShadow: `inset 0 0 0 100vmax ${arrivalColor}` },
+        { boxShadow: 'inset 0 0 0 100vmax transparent' },
+      ],
+      { duration: arrivalMs, delay: -elapsed, easing: 'ease-out' },
+    );
+    return () => animation.cancel();
+  }, [arrivalMs, arrivalColor, line.arrivedAt]);
   const isSelected = selectedLineId === line.id;
   const timestamp = timestamps && line.timestamp != null && isTimestampShown(serialMessages, index, timestamps.inactivityMs)
     ? formatTimestamp(line.timestamp, timestamps.format)
@@ -45,6 +69,7 @@ export default function RowComponent({
   const timestampLeft = lineNumbers ? `${lineNumbers.digits + 2}ch` : 0;
   return (
     <div
+      ref={rowRef}
       className="serial-terminal-row"
       // Rows as wide as their content so the sticky gutter stays visible on long lines
       style={{ ...style, width: 'max-content', minWidth: '100%', whiteSpace: 'pre', backgroundColor: isSelected ? SELECTED_ROW_BACKGROUND : undefined, cursor: 'pointer' }}

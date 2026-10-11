@@ -24,7 +24,7 @@ import Tooltip from '@mui/material/Tooltip';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
-import SerialTerminal, { type LineNumbers, type Timestamps } from './components/SerialTerminal';
+import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
 import { formatTimestamp, isTimestampShown, timestampColumnText, timestampWidth } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
 import { SerialMessage } from './types/SerialMessage';
@@ -153,6 +153,10 @@ export default function Home() {
     }
     : undefined;
 
+  const arrival: Arrival | undefined = config.highlightNewLines
+    ? { durationMs: config.newLineHighlightMs, color: config.newLineHighlightColor }
+    : undefined;
+
   const timestamps: Timestamps | undefined = config.showTimestamps
     ? {
       inText: config.timestampsInText,
@@ -203,9 +207,12 @@ export default function Home() {
   }, [logs, focusLogs, isMainAutoScrollEnabled, isFocusAutoScrollEnabled]);
 
   useEffect(() => {
+    // Appended lines are stamped with their arrival time for the new line highlight; lines
+    // replacing the whole log (file open, Refresh) are not
     const unlisten_serial_data = listen<SerialMessage>('serial-data', (e) => {
-      addSingleLog(e.payload);
-      if (e.payload.matched) addSingleFocusLog(e.payload);
+      const line = { ...e.payload, arrivedAt: Date.now() };
+      addSingleLog(line);
+      if (line.matched) addSingleFocusLog(line);
     });
     const unlisten_serial_datas = listen<SerialMessage[]>('serial-datas', (e) => {
       setLogs(e.payload);
@@ -214,10 +221,12 @@ export default function Home() {
       setFocusLogs(e.payload);
     });
     const unlisten_serial_datas_append = listen<SerialMessage[]>('serial-datas-append', (e) => {
-      setLogs(prev => [...prev, ...e.payload]);
+      const arrivedAt = Date.now();
+      setLogs(prev => [...prev, ...e.payload.map(line => ({ ...line, arrivedAt }))]);
     });
     const unlisten_serial_datas_focus_append = listen<SerialMessage[]>('serial-datas-focus-append', (e) => {
-      setFocusLogs(prev => [...prev, ...e.payload]);
+      const arrivedAt = Date.now();
+      setFocusLogs(prev => [...prev, ...e.payload.map(line => ({ ...line, arrivedAt }))]);
     });
     // Emitted when an MCP client calls clear_logs, so the window stays in sync
     // with what the agent just did to the shared buffer.
@@ -460,6 +469,7 @@ export default function Home() {
                     onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
                     lineNumbers={mainLineNumbers}
                     timestamps={timestamps}
+                    arrival={arrival}
                   />
                 </Box>
               </Resizable>
@@ -588,6 +598,7 @@ export default function Home() {
                   onClickRow={onClickFocusLogs}
                   lineNumbers={focusLineNumbers}
                   timestamps={timestamps}
+                  arrival={arrival}
                 />
               </Box>
               )}

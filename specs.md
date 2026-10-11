@@ -123,6 +123,14 @@ Enabled by the **Show timestamps** setting of the [Config tab](#config-tab). Sho
 - **In text** (**Include timestamps in copied and saved text**): the timestamp column is real text, so it is selectable and copied: the timestamp followed by a space (`HH:mm:ss.SSS line`), or blanks of the column width when the line shows no timestamp (missing or hidden by the inactivity option), so copied lines stay aligned as on screen. Save writes the same column on every line, in both terminals (`timestampColumnText` in `utils/timestamp.ts`). The line number stays out of the selection and the copied text.
 - The terminal receives it through an optional `timestamps` prop (`{ inText, inactivityMs?, format, width }`); `inactivityMs` is set only when **Only after inactivity** is checked, `width` is the formatted width of `format`.
 
+### New line highlight
+Enabled by the **Highlight new lines** setting of the [Config tab](#config-tab). A line appears with a background tint that fades out over the configured duration (default 3 s, color `#7896b429`: a desaturated blue at 16 % opacity).
+
+- **Which lines**: lines **appended** to the view, in both terminals: serial port, followed file, system messages, demo append (`serial-data` and `*-append` events). The frontend stamps them with `arrivedAt` (`Date.now()`) when appending. Lines **replacing** the log (file open, Refresh, follow start, demo regenerate) are not stamped, so a whole file never flashes.
+- **Fade**: a Web Animations API animation of an inset `box-shadow` (`inset 0 0 0 100vmax COLOR` → `transparent`, `ease-out`), so it is painted over the row background without hiding the selection highlight. The opaque gutter (line numbers, timestamps) is not tinted.
+- **Virtualized rows**: rows only exist while visible, so the animation starts with a negative delay equal to the time elapsed since `arrivedAt`. A row scrolled back into view mid-fade resumes where the fade is, and a line first seen after the duration is not highlighted. The animation is cancelled when the row is unmounted or the setting changes.
+- The terminal receives it through an optional `arrival` prop (`{ durationMs, color }`).
+
 ### Auto-scroll
 - When enabled, the list automatically scrolls to the last row when new logs arrive
 - Scrolling up manually disables auto-scroll (detected when `scrollHeight - clientHeight - scrollTop > 30`)
@@ -152,6 +160,7 @@ type SerialMessage = {
   rawline?: string;     // original unprocessed line (present if a rule matched or message differs from it)
   removed_line?: boolean; // true if the whole line was removed
   timestamp?: number | null; // reception time in ms since the Unix epoch, null when unknown (opened file)
+  arrivedAt?: number;   // frontend time an appended line was added to the view, for the new line highlight
 };
 ```
 
@@ -202,8 +211,9 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | **Show line numbers** (checkbox) | off | Shows a [line number gutter](#line-numbers) in the main and focus terminals |
 | **Show timestamps** (checkbox) | off | Shows the [reception time](#timestamps) of each line in the main and focus terminals |
 | **Include timestamps in copied and saved text** (checkbox, indented) | off | Makes the timestamp column selectable and part of copied and saved text. Disabled while timestamps are hidden |
-| **Only after inactivity** (checkbox, indented) + **Delay (ms)** (number field) | off, 500 | Only shows a timestamp on a line arriving after the delay without any line, see [Timestamps](#timestamps). The field is disabled while the checkbox is off; it accepts integers ≥ 0, saves valid values as typed and shows the saved value again when it loses focus |
+| **Only after inactivity** (checkbox, indented) + **Delay (ms)** (number field) | off, 500 | Only shows a timestamp on a line arriving after the delay without any line, see [Timestamps](#timestamps). The field is disabled while the checkbox is off; it accepts integers ≥ 0, saves valid values as typed and shows the saved value again when it loses focus (`IntegerField`) |
 | **Format** (select, indented) | `HH:mm:ss.SSS` | Timestamp format: `HH:mm:ss.SSS`, `HH:mm:ss`, `YYYY-MM-DD HH:mm:ss.SSS` or **Custom…**, which shows a **Pattern** field with the available codes and a preview. *Custom* stays selected while editing, even if the pattern matches a preset. See [Timestamps](#timestamps) for the codes |
+| **Highlight new lines** (checkbox) + **Duration (ms)** (`IntegerField`) + color button | off, 3000, `#7896b429` | Highlights lines as they arrive, fading out over the duration, see [New line highlight](#new-line-highlight). The color button opens a picker with an alpha slider (`ColorPickerButton` with `alpha`), the alpha setting how visible the highlight is. Duration and color are disabled while the checkbox is off |
 | **Enable MCP server** (checkbox, after a separator) | off | Starts or stops the [MCP server](#mcp-server) with `start_mcp_server` / `stop_mcp_server`. Reflects the real server state, read with `get_mcp_status` on mount (the server survives webview reloads and can be started by `KAZESERIAL_MCP_PORT`). **Not saved**: the server is off at each launch. Shows `Listening on {url}` while running, or the start error (e.g. port in use) |
 | **Port** (number field) | 9339 | MCP server port, 1–65535, saved. Applied on Enter or when the field loses focus: an invalid value is dropped, and a running server is restarted on the new port (`McpSettings` component) |
 
@@ -245,7 +255,7 @@ Each row represents one rule. Columns (left to right):
 |---|---|---|
 | Drag handle | 28px | `DragIndicatorIcon`, draggable for reordering |
 | Search | min 180px | Text input for the pattern. Turns red (MUI `error` state) when `Regexp` is checked and the pattern is not a valid regex |
-| Color | 36px | Native `<input type="color">` |
+| Color | 36px | `ColorPickerButton`: a swatch opening a Sketch color picker with preset colors |
 | Case sens. | 36px | Checkbox — match with case sensitivity (default: checked) |
 | Regexp | 36px | Checkbox — treat search text as regex |
 | Focus | 36px | Checkbox — send matching lines to focus panel |
@@ -277,7 +287,7 @@ When a rule has both `is_regex = true` and `advanced = true`, a single child row
 
 - The parent row's bottom border is hidden; the child row shows the bottom border
 - The child row contains a horizontal list of **selections**, each consisting of:
-  - A color picker (`<input type="color">`)
+  - A color picker (`ColorPickerButton`)
   - A text field (width 55px) for capture group numbers (e.g. `1,2`)
   - A delete button (hidden if only one selection remains)
 - A single `+` button at the end of the row adds a new selection
@@ -557,6 +567,7 @@ app/
     SerialSettings.tsx       — Serial port configuration
     FileSettings.tsx         — File follow configuration (File tab)
     HighLighSettings.tsx     — Highlight/filter rules table
+    ColorPickerButton.tsx    — Color swatch opening a Sketch picker (rules, new line highlight)
     ConfigSettings.tsx       — Application settings (Config tab)
     McpSettings.tsx          — MCP server switch and port (Config tab)
   hooks/
