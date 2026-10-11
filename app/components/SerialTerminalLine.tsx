@@ -5,7 +5,8 @@ import { type RowComponentProps } from "react-window";
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { SerialMessage } from "../types/SerialMessage";
-import { type Arrival, type LineNumbers, type Timestamps } from "./SerialTerminal";
+import { type Arrival, type LineNumbers, type RowSearch, type Timestamps } from "./SerialTerminal";
+import { domRanges, highlightNamed, lineRanges } from "../utils/search";
 import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils/timestamp";
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
@@ -19,6 +20,7 @@ export default function RowComponent({
   lineNumbers,
   timestamps,
   arrival,
+  search,
 }: RowComponentProps<{
   serialMessages: SerialMessage[];
   onClickRow?: (message_id: number) => void;
@@ -26,6 +28,7 @@ export default function RowComponent({
   lineNumbers?: LineNumbers;
   timestamps?: Timestamps;
   arrival?: Arrival;
+  search?: RowSearch;
 }>) {
   const line = serialMessages[index];
   const rowRef = useRef<HTMLDivElement>(null);
@@ -49,6 +52,25 @@ export default function RowComponent({
     );
     return () => animation.cancel();
   }, [arrivalMs, arrivalColor, line.arrivedAt]);
+
+  // Search matches, painted with the CSS Custom Highlight API so the line HTML is left untouched.
+  // Ranges are cached per line, so they keep their identity until the line or the search changes.
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const searchRanges = search && !line.removed_line ? lineRanges(line, search.regex) : undefined;
+  const currentOccurrence = search?.current?.line === index ? search.current.occurrence : -1;
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const matchHighlight = highlightNamed('search-match');
+    const currentHighlight = highlightNamed('search-current', 1);
+    if (!content || !searchRanges?.length || !matchHighlight || !currentHighlight) return;
+    const added = domRanges(content, searchRanges).flatMap((range, occurrence) => {
+      if (!range) return [];
+      const highlight = occurrence === currentOccurrence ? currentHighlight : matchHighlight;
+      highlight.add(range);
+      return [{ highlight, range }];
+    });
+    return () => added.forEach(({ highlight, range }) => highlight.delete(range));
+  }, [searchRanges, currentOccurrence]);
   const isSelected = selectedLineId === line.id;
   const timestamp = timestamps && line.timestamp != null && isTimestampShown(serialMessages, index, timestamps.inactivityMs)
     ? formatTimestamp(line.timestamp, timestamps.format)
@@ -118,6 +140,7 @@ export default function RowComponent({
         />
       ))}
       <Typography
+        ref={contentRef}
         component="span"
         sx={{
           fontFamily: 'monospace',

@@ -14,6 +14,7 @@ import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import SearchIcon from '@mui/icons-material/Search';
 import SaveIcon from '@mui/icons-material/Save';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import LastPageIcon from '@mui/icons-material/LastPage';
@@ -24,6 +25,8 @@ import Tooltip from '@mui/material/Tooltip';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
+import SearchBar from './components/SearchBar';
+import { useLogSearch } from './hooks/useLogSearch';
 import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
 import { formatTimestamp, isTimestampShown, timestampColumnText, timestampWidth } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
@@ -92,6 +95,17 @@ export default function Home() {
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
   const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Scrolls the main terminal to a search match; auto-scroll is turned off so new lines do not
+  // pull the view away from it
+  const revealMainLine = (line: number) => {
+    setIsMainAutoScrollEnabled(false);
+    ignoreMainScrollUntilRef.current = Date.now() + 250;
+    listRefMain.current?.scrollToRow({ align: 'center', behavior: 'auto', index: line });
+  };
+  const search = useLogSearch(logs, revealMainLine);
+  const openSearch = search.open;
 
   // Demo: send a batch of generated lines to the backend for processing and append
   const appendLogs = (count: number) => {
@@ -127,6 +141,20 @@ export default function Home() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Ctrl+F opens the search bar, or selects its text when it is already open
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        openSearch();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [openSearch]);
 
   // Click on a focus row: scroll the main terminal to the matching line and highlight it
   const onClickFocusLogs = (id: number) => {
@@ -349,6 +377,26 @@ export default function Home() {
                       gap: 1,
                     }}
                   >
+                    <Tooltip title="Search (Ctrl+F)" placement="top" arrow>
+                    <IconButton
+                      aria-label="search"
+                      aria-pressed={search.isOpen}
+                      size="medium"
+                      color="inherit"
+                      onClick={search.isOpen ? search.close : search.open}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        border: '1px solid #333',
+                        bgcolor: search.isOpen ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
+                        '&:hover': {
+                          bgcolor: search.isOpen ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
+                        },
+                      }}
+                    >
+                      <SearchIcon fontSize="medium" />
+                    </IconButton>
+                    </Tooltip>
                     <Tooltip title="Auto-scroll" placement="top" arrow>
                     <IconButton
                       aria-label="toggle auto-scroll"
@@ -461,6 +509,11 @@ export default function Home() {
                       <MenuItem onClick={() => { regenerateLogs(); setMainMenuAnchor(null); }}>Demo - Clear and add 10 logs</MenuItem>
                     </Menu>
                   </Box>
+                  {search.isOpen && (
+                    <Box sx={{ position: 'absolute', top: 54, right: 28, zIndex: 2 }}>
+                      <SearchBar search={search} inputRef={searchInputRef} />
+                    </Box>
+                  )}
                   <SerialTerminal
                     serial_messages={logs}
                     listRef={listRefMain}
@@ -470,6 +523,9 @@ export default function Home() {
                     lineNumbers={mainLineNumbers}
                     timestamps={timestamps}
                     arrival={arrival}
+                    search={search.isOpen && search.regex
+                      ? { regex: search.regex, current: search.matches[search.currentIndex] }
+                      : undefined}
                   />
                 </Box>
               </Resizable>

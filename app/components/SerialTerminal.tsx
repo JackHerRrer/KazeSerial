@@ -5,6 +5,7 @@ import { List, type ListImperativeAPI } from 'react-window';
 import Box from '@mui/material/Box';
 import RowComponent from './SerialTerminalLine';
 import { SerialMessage } from '../types/SerialMessage';
+import { type SearchMatch } from '../utils/search';
 
 /** Line number gutter: number shown for each row, and digit count of the widest number */
 export type LineNumbers = {
@@ -17,6 +18,12 @@ export type LineNumbers = {
  * only shows it on lines arriving after that long without any line. `width` is the width of a
  * timestamp formatted with `format`, in characters.
  */
+/** Search matches to highlight: every match of `regex`, `current` more visibly */
+export type RowSearch = {
+  regex: RegExp;
+  current?: SearchMatch;
+};
+
 /** New line highlight: lines appended to the view fade from `color` over `durationMs` */
 export type Arrival = {
   durationMs: number;
@@ -41,6 +48,7 @@ interface SerialTerminalProps {
   lineNumbers?: LineNumbers;
   timestamps?: Timestamps;
   arrival?: Arrival;
+  search?: RowSearch;
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
@@ -54,6 +62,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   lineNumbers,
   timestamps,
   arrival,
+  search,
 }) => {
   const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
 
@@ -114,7 +123,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
             return line?.removed_line ? 0 : 20;
           }}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers, timestamps, arrival }}
+          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers, timestamps, arrival, search }}
           overscanCount={10}
           listRef={listRef}
           onScroll={onScroll}

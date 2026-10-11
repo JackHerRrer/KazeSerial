@@ -36,6 +36,7 @@ A vertical flex column containing:
 1. **Main Serial Terminal** (top, default ~70% height, vertically resizable)
    - Displays all incoming log lines
    - Toolbar (top-right overlay, left to right):
+     - **Search** (magnifier icon) — opens or closes the [search bar](#search) (also Ctrl+F); highlighted in blue while open
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
      - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
      - **Save** (save icon) — saves the main log to a `.log` file
@@ -130,6 +131,18 @@ Enabled by the **Highlight new lines** setting of the [Config tab](#config-tab).
 - **Fade**: a Web Animations API animation of an inset `box-shadow` (`inset 0 0 0 100vmax COLOR` → `transparent`, `ease-out`), so it is painted over the row background without hiding the selection highlight. The opaque gutter (line numbers, timestamps) is not tinted.
 - **Virtualized rows**: rows only exist while visible, so the animation starts with a negative delay equal to the time elapsed since `arrivedAt`. A row scrolled back into view mid-fade resumes where the fade is, and a line first seen after the duration is not highlighted. The animation is cancelled when the row is unmounted or the setting changes.
 - The terminal receives it through an optional `arrival` prop (`{ durationMs, color }`).
+
+### Search
+Search in the main terminal, like the find widget of a code editor.
+
+- **Opening**: Ctrl+F or the toolbar **Search** button. The bar appears at the top right of the main terminal, under the toolbar. Ctrl+F on an open bar focuses and selects its text. The search is kept when the bar is closed and reopened.
+- **Bar** (`SearchBar`): query field, **Aa** (match case, off by default) and **.\*** (regular expression, JavaScript syntax) toggles, a counter (`current / total`, `No results`, or `Invalid regex` with a red field border), previous / next buttons, close button.
+- **Keyboard**: Enter goes to the next match, Shift+Enter to the previous one (both wrap around), Escape closes the bar.
+- **Searched text**: the displayed text of each line of the main log, i.e. the message without the highlight tags, unescaped (`displayText`): text removed by `remove` rules is not searched, `<` and `&` are. Line numbers and timestamps are not part of it. Lines hidden by a `remove` + `whole_line` rule are skipped. Empty regex matches (e.g. `a*`) are ignored.
+- **Navigation**: changing the query or a toggle goes to the first match; next / previous go to the following one. Going to a match scrolls its line to the center of the terminal and disables auto-scroll, so new lines do not pull the view away. The current match index is clamped when lines disappear (Clear, Refresh).
+- **Highlighting**: every match gets a yellow background (`rgba(230,190,60,0.35)`), the current one orange (`rgba(255,140,0,0.9)`, dark text). It uses the CSS Custom Highlight API (`CSS.highlights`): each visible row adds DOM ranges for its matches to the shared `search-match` / `search-current` highlights and removes them when unmounted, so the line HTML and the colors of the highlight rules are untouched. The `::highlight()` styles are injected at runtime on first use, because the build CSS parser (Turbopack) does not support this pseudo-element yet. Without API support, navigation still works but nothing is highlighted.
+- **Performance**: match ranges are cached per line and regex (`lineRanges`, `WeakMap` keyed by message), so when lines arrive only the new ones are scanned. The match list is rebuilt from the cache on every log change while the bar is open.
+- **Scope**: the main terminal only, not the focus terminal.
 
 ### Auto-scroll
 - When enabled, the list automatically scrolls to the last row when new logs arrive
@@ -568,15 +581,18 @@ app/
     FileSettings.tsx         — File follow configuration (File tab)
     HighLighSettings.tsx     — Highlight/filter rules table
     ColorPickerButton.tsx    — Color swatch opening a Sketch picker (rules, new line highlight)
+    SearchBar.tsx            — Search bar of the main terminal
     ConfigSettings.tsx       — Application settings (Config tab)
     McpSettings.tsx          — MCP server switch and port (Config tab)
   hooks/
     useAppConfig.ts          — Loads and saves the application settings
+    useLogSearch.ts          — Search state and navigation (main terminal)
   types/
     SerialMessage.tsx        — SerialMessage type definition
     AppConfig.tsx            — Application settings type and defaults
   utils/
     timestamp.ts             — Timestamp formatting
+    search.ts                — Search matching, per-line cache and highlight ranges
 src-tauri/
   src/
     lib.rs                   — All Rust backend logic
