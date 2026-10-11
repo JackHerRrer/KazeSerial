@@ -178,6 +178,17 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           </span>
         </Tooltip>
       </Box>
+      <FormControlLabel
+        label="Auto-reconnect serial port"
+        sx={{ pt: 1 }}
+        control={
+          <Checkbox
+            size="small"
+            checked={config.autoReconnect}
+            onChange={(e) => onConfigChange({ autoReconnect: e.target.checked })}
+          />
+        }
+      />
       <Divider sx={{ my: 2 }} />
       <McpSettings port={config.mcpPort} onPortChange={(mcpPort) => onConfigChange({ mcpPort })} />
     </Box>

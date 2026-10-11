@@ -54,7 +54,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ config, onConfigChange }) =
         {/* Source panels are stacked in the same grid cell so the area keeps the height of the tallest one */}
         <Box sx={{ display: 'grid' }}>
           <SourcePanel active={sourceTab === 'serial'}>
-            <SerialSettings />
+            <SerialSettings autoReconnect={config.autoReconnect} />
           </SourcePanel>
           <SourcePanel active={sourceTab === 'file'}>
             <FileSettings />

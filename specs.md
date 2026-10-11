@@ -195,7 +195,8 @@ Select the data source.
 Serial port configuration:
 - **Port selector** — dropdown listing available ports with auto-detection on mount. Each entry shows `portName - deviceLabel` (manufacturer + product name for USB, or generic label). A refresh button re-lists ports.
 - **Baud rate selector** — dropdown with values: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600. Default: 115200.
-- **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly.
+- **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly. The **Auto-reconnect serial port** setting of the [Config tab](#config-tab) is passed to `open_port` on Connect.
+- **Waiting status** — with auto-reconnect, when the port is lost, the button stays on **Disconnect** (which cancels the wait) and a warning caption *Port lost, waiting for it to come back…* is shown until `serial-reconnected` is received; the port it carries is then selected, as a USB device may come back under another name.
 
 #### File tab
 `FileSettings` component, two rows:
@@ -227,6 +228,7 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | **Only after inactivity** (checkbox, indented) + **Delay (ms)** (number field) | on, 500 | Only shows a timestamp on a line arriving after the delay without any line, see [Timestamps](#timestamps). The field is disabled while the checkbox is off; it accepts integers ≥ 0, saves valid values as typed and shows the saved value again when it loses focus (`IntegerField`) |
 | **Format** (select, indented) | `HH:mm:ss` | Timestamp format: `HH:mm:ss`, `HH:mm:ss.SSS`, `YYYY-MM-DD HH:mm:ss.SSS` or **Custom…**, which shows a **Pattern** field with the available codes and a preview. *Custom* stays selected while editing, even if the pattern matches a preset. See [Timestamps](#timestamps) for the codes |
 | **Highlight new lines** (checkbox) + **Duration (ms)** (`IntegerField`) + color button | on, 3000, `#7896b429` | Highlights lines as they arrive, fading out over the duration, see [New line highlight](#new-line-highlight). The color button opens a picker with an alpha slider (`ColorPickerButton` with `alpha`), the alpha setting how visible the highlight is. Duration and color are disabled while the checkbox is off |
+| **Auto-reconnect serial port** (checkbox) | on | When the serial port is lost (device reset, unplugged, reflashed), waits for it to come back and reopens it instead of disconnecting, see [`open_port`](#open_portport_name-port_description-baud_rate-auto_reconnect). Applied on the next Connect |
 | **Enable MCP server** (checkbox, after a separator) | off | Starts or stops the [MCP server](#mcp-server) with `start_mcp_server` / `stop_mcp_server`. Reflects the real server state, read with `get_mcp_status` on mount (the server survives webview reloads and can be started by `KAZESERIAL_MCP_PORT`). **Not saved**: the server is off at each launch. Shows `Listening on {url}` while running, or the start error (e.g. port in use) |
 | **Port** (number field) | 9339 | MCP server port, 1–65535, saved. Applied on Enter or when the field loses focus: an invalid value is dropped, and a running server is restarted on the new port (`McpSettings` component) |
 
@@ -365,6 +367,7 @@ struct AppState {
     file_watch_active: Arc<AtomicBool>,
     log_store: Arc<LogStore>,          // copy of every emitted line, served by MCP
     serial_connected: Arc<AtomicBool>, // lock-free mirror of serial_connection.is_some()
+    serial_session: Arc<AtomicU64>,    // incremented by every open / close, stops stale reconnection loops
     mcp_server: Arc<Mutex<Option<McpServerHandle>>>,
 }
 ```
@@ -374,12 +377,26 @@ struct AppState {
 #### `list_ports() -> Vec<SerialPortEntry>`
 Returns available serial ports. For USB ports, the label is `manufacturer + product`; for others, a generic string. Returns `{ portName, deviceLabel }`.
 
-#### `open_port(port_name, port_description?, baud_rate)`
+#### `open_port(port_name, port_description?, baud_rate, auto_reconnect?)`
 Opens the serial port and spawns a Tokio task that reads byte by byte, assembles lines (splitting on `\r\n`, `\n\r`, `\r`, or `\n`), and processes each line through `parse_log_line`. Non-ASCII bytes are emitted as hex strings (e.g. `0x1f `). Processed lines are emitted as `serial-data` events.
 
 On success, emits a system message: `[HH:MM:SS] KazeSerial: Connection to {port} ({description}) established`.
 On failure, emits a system message: `[HH:MM:SS] KazeSerial: Connection failed: {error}` and returns an error.
-If the read loop encounters a non-timeout I/O error (device disconnected), emits: `[HH:MM:SS] KazeSerial: Connection to {port} lost` and exits the loop.
+If the read loop encounters a non-timeout I/O error (device disconnected):
+- **without `auto_reconnect`** (default): emits `[HH:MM:SS] KazeSerial: Connection to {port} lost` and `serial-disconnected`, and exits the loop;
+- **with `auto_reconnect`**: releases the port, emits `Connection to {port} lost, waiting for it to come back` and `serial-reconnecting`, then tries to reopen the port with the same baud rate every 500 ms (`wait_for_port`). Once open, emits `Connection to {port} re-established` (or `… re-established as {new port}`) and `serial-reconnected` with the port name, and resumes reading; a partially received line is dropped. `serial_connected` (MCP `get_status`) is false while waiting.
+
+A USB device reset while its port is still open often comes back under another name (`/dev/ttyACM0` → `/dev/ttyACM1`). So on Connect, the USB identity of the port (VID, PID, serial number) is recorded, and each attempt looks for it among the available ports (`find_reconnect_port`):
+
+| Port | Port reopened |
+|---|---|
+| Not USB | The original name (it may not be listed, e.g. a pseudo terminal) |
+| USB with a serial number | The port of the same device (same VID, PID and serial number), whatever its name; the original name first |
+| USB without serial number | The original name if it is a port with the same VID/PID again, otherwise the only port with that VID/PID. With several such ports the device cannot be told apart, so none is opened and the wait goes on |
+
+When the name changed, the log store source is updated and the Serial tab selects the new port.
+
+Every `open_port` and `close_port` increments `serial_session`. A waiting loop stops silently when the session changes, i.e. on Disconnect or a new Connect, and checks it again under the connection lock before installing a reopened port.
 
 `port_description` is optional — if omitted, the description part is empty.
 
@@ -498,6 +515,8 @@ Format: `[HH:MM:SS] KazeSerial: {message}` where the timestamp is UTC wall-clock
 | Port opened successfully | `Connection to {port} ({description}) established` |
 | Port open failed | `Connection failed: {error}` |
 | Read loop I/O error | `Connection to {port} lost` |
+| Read loop I/O error, with auto-reconnect | `Connection to {port} lost, waiting for it to come back` |
+| Port reopened by auto-reconnect | `Connection to {port} re-established`, or `Connection to {port} re-established as {new port}` when it came back under another name |
 | Port closed by user | `Connection closed` |
 | MCP server started | `MCP server listening on {url}` |
 | MCP server stopped | `MCP server stopped` |
@@ -562,7 +581,9 @@ Line ids are stable within a session and never reused.
 | `serial-datas-focus-append` | `SerialMessage[]` | Batch of new focus-matched lines to append |
 | `file-watch-stopped` | *(empty)* | Emitted when the file follow loop exits (user stop or missing file). The frontend resets the Follow button. |
 | `logs-cleared` | *(empty)* | Emitted when an MCP client calls `clear_logs`. The frontend clears the main and focus logs so the window stays in sync. |
-| `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged). The frontend listens to this event to reset the Connect button to its disconnected state. |
+| `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged) without auto-reconnect. The frontend listens to this event to reset the Connect button to its disconnected state. |
+| `serial-reconnecting` | *(empty)* | Emitted when the port is lost with auto-reconnect: the backend waits for it to come back. The Serial tab shows a waiting caption. |
+| `serial-reconnected` | `string` (port name) | Emitted when auto-reconnect reopened the port, possibly under another name. The Serial tab hides the waiting caption, selects that port and lists the ports again. |
 
 ---
 

@@ -151,6 +151,9 @@ struct AppState {
     /// Lock-free mirror of `serial_connection.is_some()`. Reading the connection
     /// itself would contend with the read loop, which holds it across blocking reads.
     serial_connected: Arc<AtomicBool>,
+    /// Incremented by every open / close of the serial port, so a read loop waiting to
+    /// reconnect stops when its session has been replaced or closed.
+    serial_session: Arc<AtomicU64>,
     mcp_server: Arc<Mutex<Option<mcp::McpServerHandle>>>,
 }
 
@@ -691,7 +694,11 @@ async fn open_port(
     port_name: String,
     port_description: Option<String>,
     baud_rate: u32,
+    // When the port is lost, wait for it to come back and reopen it instead of disconnecting
+    auto_reconnect: Option<bool>,
 ) -> Result<(), String> {
+    let auto_reconnect = auto_reconnect.unwrap_or(false);
+    let session = state.serial_session.fetch_add(1, Ordering::SeqCst) + 1;
     match serialport::new(&port_name, baud_rate).open() {
         Ok(port) => {
             *state.serial_connection.lock().await = Some(port);
@@ -710,7 +717,12 @@ async fn open_port(
             ).await;
             let serial = state.serial_connection.clone();
             let app_handle = app.clone();
-            let port_name_loop = port_name.clone();
+            let mut port_name_loop = port_name.clone();
+            // To find the device again if it comes back under another name
+            let identity = available_port_identities()
+                .into_iter()
+                .find(|(name, _)| *name == port_name)
+                .and_then(|(_, identity)| identity);
             tokio::spawn(async move {
                 let mut line_buffer: Vec<u8> = Vec::new();
                 //let regex_eol = regex::Regex::new(r"\r\n|\n\r|\r|\n").unwrap();
@@ -770,12 +782,47 @@ async fn open_port(
                                     .state::<AppState>()
                                     .serial_connected
                                     .store(false, Ordering::SeqCst);
+                                if !auto_reconnect {
+                                    emit_system_msg(
+                                        &app_handle,
+                                        format!("Connection to {} lost", port_name_loop),
+                                    ).await;
+                                    let _ = app_handle.emit("serial-disconnected", ());
+                                    break;
+                                }
+                                // Release the dead port, then wait for the device to come back
+                                *lock = None;
+                                drop(lock);
+                                line_buffer.clear();
                                 emit_system_msg(
                                     &app_handle,
-                                    format!("Connection to {} lost", port_name_loop),
+                                    format!("Connection to {} lost, waiting for it to come back", port_name_loop),
                                 ).await;
-                                let _ = app_handle.emit("serial-disconnected", ());
-                                break;
+                                let _ = app_handle.emit("serial-reconnecting", ());
+                                let Some(new_name) =
+                                    wait_for_port(&app_handle, &port_name_loop, identity.as_ref(), baud_rate, session).await
+                                else {
+                                    break;
+                                };
+                                if new_name == port_name_loop {
+                                    emit_system_msg(
+                                        &app_handle,
+                                        format!("Connection to {} re-established", port_name_loop),
+                                    ).await;
+                                } else {
+                                    emit_system_msg(
+                                        &app_handle,
+                                        format!("Connection to {} re-established as {}", port_name_loop, new_name),
+                                    ).await;
+                                    app_handle
+                                        .state::<AppState>()
+                                        .log_store
+                                        .set_source(LogSource::Serial { port: new_name.clone(), baud_rate })
+                                        .await;
+                                    port_name_loop = new_name;
+                                }
+                                // Carries the port name, so the Serial tab selects it if it changed
+                                let _ = app_handle.emit("serial-reconnected", port_name_loop.clone());
                             }
                         }
                     } else {
@@ -792,8 +839,102 @@ async fn open_port(
     }
 }
 
+/// USB identity of a serial port. A USB device reset while its port is still open often comes
+/// back under another name (`/dev/ttyACM0` -> `/dev/ttyACM1`), so it is found again by identity.
+#[derive(Clone, Debug, PartialEq)]
+struct UsbIdentity {
+    vid: u16,
+    pid: u16,
+    serial_number: Option<String>,
+}
+
+/// Available ports with their USB identity (`None` for non-USB ports).
+fn available_port_identities() -> Vec<(String, Option<UsbIdentity>)> {
+    serialport::available_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| {
+            let identity = match p.port_type {
+                SerialPortType::UsbPort(info) => Some(UsbIdentity {
+                    vid: info.vid,
+                    pid: info.pid,
+                    serial_number: info.serial_number,
+                }),
+                _ => None,
+            };
+            (p.port_name, identity)
+        })
+        .collect()
+}
+
+/// Port to reopen after `original` was lost, among the `available` ports:
+/// - without USB identity, `original` itself (it may not be listed, e.g. a pseudo terminal);
+/// - with a serial number, the port of the same device, whatever its name;
+/// - without serial number, `original` if it is that device again, otherwise the only port with the
+///   same VID/PID: when there are several, the device cannot be told apart, so none is chosen.
+fn find_reconnect_port(
+    original: &str,
+    identity: Option<&UsbIdentity>,
+    available: &[(String, Option<UsbIdentity>)],
+) -> Option<String> {
+    let Some(identity) = identity else {
+        return Some(original.to_string());
+    };
+    let candidates: Vec<&String> = available
+        .iter()
+        .filter(|(_, port)| {
+            port.as_ref().is_some_and(|port| {
+                port.vid == identity.vid
+                    && port.pid == identity.pid
+                    && (identity.serial_number.is_none() || port.serial_number == identity.serial_number)
+            })
+        })
+        .map(|(name, _)| name)
+        .collect();
+    if candidates.iter().any(|name| *name == original) {
+        return Some(original.to_string());
+    }
+    if identity.serial_number.is_some() || candidates.len() == 1 {
+        return candidates.first().map(|name| name.to_string());
+    }
+    None
+}
+
+/// Tries every 500 ms to reopen the port lost under `port_name`, found again by its USB identity
+/// when it has one. Returns the name it was reopened under, or `None` if the session was closed or
+/// replaced meanwhile (Disconnect, or a new Connect).
+async fn wait_for_port(
+    app: &tauri::AppHandle,
+    port_name: &str,
+    identity: Option<&UsbIdentity>,
+    baud_rate: u32,
+    session: u64,
+) -> Option<String> {
+    let state = app.state::<AppState>();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if state.serial_session.load(Ordering::SeqCst) != session {
+            return None;
+        }
+        let Some(name) = find_reconnect_port(port_name, identity, &available_port_identities()) else {
+            continue;
+        };
+        if let Ok(port) = serialport::new(&name, baud_rate).open() {
+            let mut connection = state.serial_connection.lock().await;
+            // Checked again under the lock: a Disconnect may have happened while opening
+            if state.serial_session.load(Ordering::SeqCst) != session {
+                return None;
+            }
+            *connection = Some(port);
+            state.serial_connected.store(true, Ordering::SeqCst);
+            return Some(name);
+        }
+    }
+}
+
 #[tauri::command]
 async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.serial_session.fetch_add(1, Ordering::SeqCst);
     *state.serial_connection.lock().await = None;
     state.serial_connected.store(false, Ordering::SeqCst);
     emit_system_msg(&app, "Connection closed".to_string()).await;
@@ -1021,6 +1162,7 @@ pub fn run() {
         file_watch_active: Arc::new(AtomicBool::new(false)),
         log_store: Arc::new(LogStore::new()),
         serial_connected: Arc::new(AtomicBool::new(false)),
+        serial_session: Arc::new(AtomicU64::new(0)),
         mcp_server: Arc::new(Mutex::new(None)),
     };
     let builder = tauri::Builder::default()
@@ -1065,6 +1207,59 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::*;
+
+    fn usb(vid: u16, pid: u16, serial: Option<&str>) -> Option<UsbIdentity> {
+        Some(UsbIdentity { vid, pid, serial_number: serial.map(str::to_string) })
+    }
+
+    fn port(name: &str, identity: Option<UsbIdentity>) -> (String, Option<UsbIdentity>) {
+        (name.to_string(), identity)
+    }
+
+    #[test]
+    fn non_usb_port_is_reopened_by_name() {
+        assert_eq!(find_reconnect_port("/dev/ttyS0", None, &[]), Some("/dev/ttyS0".to_string()));
+    }
+
+    #[test]
+    fn device_with_serial_number_is_found_under_another_name() {
+        let identity = usb(0x303a, 0x1001, Some("D0:CF"));
+        let available = [port("/dev/ttyUSB0", usb(0x0403, 0x6001, Some("FTAL"))), port("/dev/ttyACM1", identity.clone())];
+        assert_eq!(find_reconnect_port("/dev/ttyACM0", identity.as_ref(), &available), Some("/dev/ttyACM1".to_string()));
+    }
+
+    #[test]
+    fn same_name_is_preferred() {
+        let identity = usb(0x303a, 0x1001, None);
+        let available = [port("/dev/ttyACM1", identity.clone()), port("/dev/ttyACM0", identity.clone())];
+        assert_eq!(find_reconnect_port("/dev/ttyACM0", identity.as_ref(), &available), Some("/dev/ttyACM0".to_string()));
+    }
+
+    #[test]
+    fn device_not_back_yet_is_not_found() {
+        let identity = usb(0x303a, 0x1001, Some("D0:CF"));
+        let available = [port("/dev/ttyACM0", usb(0x303a, 0x1001, Some("OTHER")))];
+        assert_eq!(find_reconnect_port("/dev/ttyACM0", identity.as_ref(), &available), None);
+    }
+
+    #[test]
+    fn without_serial_number_a_single_candidate_is_accepted() {
+        let identity = usb(0x0403, 0x6001, None);
+        let available = [port("/dev/ttyUSB1", identity.clone())];
+        assert_eq!(find_reconnect_port("/dev/ttyUSB0", identity.as_ref(), &available), Some("/dev/ttyUSB1".to_string()));
+    }
+
+    #[test]
+    fn without_serial_number_several_candidates_are_ambiguous() {
+        let identity = usb(0x0403, 0x6001, None);
+        let available = [port("/dev/ttyUSB1", identity.clone()), port("/dev/ttyUSB2", identity.clone())];
+        assert_eq!(find_reconnect_port("/dev/ttyUSB0", identity.as_ref(), &available), None);
+    }
 }
 
 #[cfg(test)]

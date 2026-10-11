@@ -17,6 +17,8 @@ export type AppConfig = {
   highlightNewLines: boolean;
   newLineHighlightMs: number;
   newLineHighlightColor: string; // #rrggbbaa, the alpha sets how visible it is
+  // When the serial port is lost, wait for it to come back and reopen it (applied on Connect)
+  autoReconnect: boolean;
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -30,4 +32,5 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   highlightNewLines: true,
   newLineHighlightMs: 3000,
   newLineHighlightColor: '#7896b429',
+  autoReconnect: true,
 };
