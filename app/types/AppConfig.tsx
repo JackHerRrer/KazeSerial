@@ -21,13 +21,13 @@ export type AppConfig = {
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   showLineNumbers: false,
-  showTimestamps: false,
+  showTimestamps: true,
   timestampsInText: false,
-  timestampsAfterInactivityOnly: false,
+  timestampsAfterInactivityOnly: true,
   timestampInactivityMs: 500,
   timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
   mcpPort: 9339,
-  highlightNewLines: false,
+  highlightNewLines: true,
   newLineHighlightMs: 3000,
   newLineHighlightColor: '#7896b429',
 };

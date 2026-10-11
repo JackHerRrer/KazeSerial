@@ -1,5 +1,5 @@
 /** Timestamp formats offered in the Config tab; the first one is the default */
-export const TIMESTAMP_FORMATS = ['HH:mm:ss.SSS', 'HH:mm:ss', 'YYYY-MM-DD HH:mm:ss.SSS'];
+export const TIMESTAMP_FORMATS = ['HH:mm:ss', 'HH:mm:ss.SSS', 'YYYY-MM-DD HH:mm:ss.SSS'];
 export const DEFAULT_TIMESTAMP_FORMAT = TIMESTAMP_FORMATS[0];
 
 /** Codes replaced in a timestamp format, all fixed-width; any other character is kept as is */
