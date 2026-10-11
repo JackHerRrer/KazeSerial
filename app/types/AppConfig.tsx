@@ -4,10 +4,15 @@ export type AppConfig = {
   showTimestamps: boolean;
   // Timestamps are part of the line text: selectable, copied and saved
   timestampsInText: boolean;
+  // Only show a timestamp on a line arriving after `timestampInactivityMs` without any line
+  timestampsAfterInactivityOnly: boolean;
+  timestampInactivityMs: number;
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   showLineNumbers: false,
   showTimestamps: false,
   timestampsInText: false,
+  timestampsAfterInactivityOnly: false,
+  timestampInactivityMs: 500,
 };

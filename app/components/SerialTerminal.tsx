@@ -12,9 +12,13 @@ export type LineNumbers = {
   digits: number;
 };
 
-/** Timestamp column; `inText` makes it selectable and part of the copied text */
+/**
+ * Timestamp column; `inText` makes it selectable and part of the copied text, `inactivityMs`
+ * only shows it on lines arriving after that long without any line
+ */
 export type Timestamps = {
   inText: boolean;
+  inactivityMs?: number;
 };
 
 interface SerialTerminalProps {

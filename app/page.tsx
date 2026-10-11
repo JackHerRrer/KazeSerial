@@ -27,7 +27,7 @@ import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
 import SerialTerminal, { type LineNumbers, type Timestamps } from './components/SerialTerminal';
-import { formatTimestamp } from './utils/timestamp';
+import { formatTimestamp, isTimestampShown, timestampColumnText } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
 import { SerialMessage } from './types/SerialMessage';
 
@@ -160,13 +160,22 @@ export default function Home() {
     : undefined;
 
   const timestamps: Timestamps | undefined = config.showTimestamps
-    ? { inText: config.timestampsInText }
+    ? {
+      inText: config.timestampsInText,
+      inactivityMs: config.timestampsAfterInactivityOnly ? config.timestampInactivityMs : undefined,
+    }
     : undefined;
 
-  // Text written by Save: the raw line, prefixed with its timestamp when timestamps are part of the text
-  const savedLineText = (msg: SerialMessage) => {
+  // Text written by Save: the raw line, prefixed with the timestamp column when timestamps are
+  // part of the text (blanks when the line shows no timestamp), as on screen
+  const savedLineText = (lines: SerialMessage[], index: number) => {
+    const msg = lines[index];
     const text = msg.rawline ?? msg.message;
-    return timestamps?.inText && msg.timestamp != null ? `${formatTimestamp(msg.timestamp)} ${text}` : text;
+    if (!timestamps?.inText) return text;
+    const timestamp = msg.timestamp != null && isTimestampShown(lines, index, timestamps.inactivityMs)
+      ? formatTimestamp(msg.timestamp)
+      : '';
+    return timestampColumnText(timestamp) + text;
   };
 
   // Re-apply current highlight rules to all existing raw lines
@@ -448,8 +457,8 @@ export default function Home() {
                       color="inherit"
                       onClick={async () => {
                         let buf = '';
-                        for (const msg of logs) {
-                          buf += savedLineText(msg) + '\n';
+                        for (let index = 0; index < logs.length; index++) {
+                          buf += savedLineText(logs, index) + '\n';
                         }
                         const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
                         if (filePath) await writeTextFile(filePath, buf);
@@ -604,8 +613,8 @@ export default function Home() {
                     color="inherit"
                     onClick={async () => {
                       let buf = '';
-                      for (const msg of focusLogs) {
-                        buf += savedLineText(msg) + '\n';
+                      for (let index = 0; index < focusLogs.length; index++) {
+                        buf += savedLineText(focusLogs, index) + '\n';
                       }
                       const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
                       if (filePath) await writeTextFile(filePath, buf);
