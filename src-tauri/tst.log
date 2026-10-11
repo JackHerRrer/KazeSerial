@@ -1,0 +1,10 @@
+[0.001199] DEBUG: Processing data chunk 0 state=1
+[0.032135] DEBUG: Processing data chunk 1 state=2
+[0.051612] WARN: Retrying packet 2...                                                                                                          00000000
+[0.072580] WARN: Retrying packet 3...                                                                                                          00000000
+[0.092396] DEBUG: Processing data chunk 4 state=3
+[0.172363] INFO: Received packet len=6 flags=0x19                                                                                                          00000000
+[0.204177] INFO: Received packet len=7 flags=0x54                                                                                                          00000000
+[0.266658] DEBUG: Processing data chunk 7 state=0
+[0.299946] ERROR: Connection timeout at address 0xdcc4                                                                                                        00000000
+[0.354804] DEBUG: Processing data chunk 9 state=4
