@@ -12,6 +12,11 @@ export type LineNumbers = {
   digits: number;
 };
 
+/** Timestamp column; `inText` makes it selectable and part of the copied text */
+export type Timestamps = {
+  inText: boolean;
+};
+
 interface SerialTerminalProps {
   serial_messages: SerialMessage[];
   height?: number | string;
@@ -21,6 +26,7 @@ interface SerialTerminalProps {
   onClickRow?: (message_id: number) => void;
   selectedLineId?: number | null;
   lineNumbers?: LineNumbers;
+  timestamps?: Timestamps;
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
@@ -32,6 +38,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   onClickRow,
   selectedLineId: externalSelectedLineId,
   lineNumbers,
+  timestamps,
 }) => {
   const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
 
@@ -92,7 +99,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
             return line?.removed_line ? 0 : 20;
           }}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers }}
+          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers, timestamps }}
           overscanCount={10}
           listRef={listRef}
           onScroll={onScroll}

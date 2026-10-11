@@ -26,7 +26,8 @@ import Tooltip from '@mui/material/Tooltip';
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
-import SerialTerminal, { type LineNumbers } from './components/SerialTerminal';
+import SerialTerminal, { type LineNumbers, type Timestamps } from './components/SerialTerminal';
+import { formatTimestamp } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
 import { SerialMessage } from './types/SerialMessage';
 
@@ -158,12 +159,24 @@ export default function Home() {
     }
     : undefined;
 
+  const timestamps: Timestamps | undefined = config.showTimestamps
+    ? { inText: config.timestampsInText }
+    : undefined;
+
+  // Text written by Save: the raw line, prefixed with its timestamp when timestamps are part of the text
+  const savedLineText = (msg: SerialMessage) => {
+    const text = msg.rawline ?? msg.message;
+    return timestamps?.inText && msg.timestamp != null ? `${formatTimestamp(msg.timestamp)} ${text}` : text;
+  };
+
   // Re-apply current highlight rules to all existing raw lines
   const onClickRefreshAll = () => {
     const rawLines = logs.map(log => log.rawline ?? log.message);
     clearFocusLogs();
     clearLogs();
-    invoke<void>('add_logs_line', { lines: rawLines })
+    // Reception times are sent back so reprocessed lines keep them
+    const timestamps = logs.map(log => log.timestamp ?? null);
+    invoke<void>('add_logs_line', { lines: rawLines, timestamps })
       .catch((err: unknown) => console.error(err));
   };
 
@@ -436,7 +449,7 @@ export default function Home() {
                       onClick={async () => {
                         let buf = '';
                         for (const msg of logs) {
-                          buf += (msg.rawline ?? msg.message) + '\n';
+                          buf += savedLineText(msg) + '\n';
                         }
                         const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
                         if (filePath) await writeTextFile(filePath, buf);
@@ -508,6 +521,7 @@ export default function Home() {
                     selectedLineId={selectedMainLineId}
                     onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
                     lineNumbers={mainLineNumbers}
+                    timestamps={timestamps}
                   />
                 </Box>
               </Resizable>
@@ -591,7 +605,7 @@ export default function Home() {
                     onClick={async () => {
                       let buf = '';
                       for (const msg of focusLogs) {
-                        buf += (msg.rawline ?? msg.message) + '\n';
+                        buf += savedLineText(msg) + '\n';
                       }
                       const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
                       if (filePath) await writeTextFile(filePath, buf);
@@ -635,6 +649,7 @@ export default function Home() {
                   onScroll={handleScroll(isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
                   onClickRow={onClickFocusLogs}
                   lineNumbers={focusLineNumbers}
+                  timestamps={timestamps}
                 />
               </Box>
               )}

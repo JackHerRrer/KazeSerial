@@ -88,6 +88,23 @@ struct Payload {
     matched: bool,
     rawline: Option<String>,
     removed_line: bool,
+    /// Reception time in milliseconds since the Unix epoch; `None` for lines read from a
+    /// loaded file, whose real time is unknown.
+    timestamp: Option<u64>,
+}
+
+/// Current time in milliseconds since the Unix epoch, used as a line reception time.
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// Pairs every line with the same reception time, for [`process_batch`].
+fn with_timestamp(lines: Vec<String>, timestamp: Option<u64>) -> Vec<(String, Option<u64>)> {
+    lines.into_iter().map(|line| (line, timestamp)).collect()
 }
 
 /// Returns the current UTC wall-clock time as HH:MM:SS.
@@ -111,7 +128,7 @@ async fn emit_system_msg(app: &tauri::AppHandle, msg: String) {
     let state = app.state::<AppState>();
     let message_id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
     let highlights = state.highlights.lock().await.clone();
-    let payload = process_line(raw, &highlights, message_id);
+    let payload = process_line(raw, &highlights, message_id, Some(now_ms()));
     publish_one(app, payload).await;
 }
 
@@ -181,8 +198,8 @@ async fn publish_one(app: &tauri::AppHandle, payload: Payload) {
     let _ = app.emit("serial-data", payload);
 }
 
-/// Processes `lines` through the current highlight rules, in parallel.
-async fn process_batch(app: &tauri::AppHandle, lines: Vec<String>) -> Vec<Payload> {
+/// Processes `lines` and their reception times through the current highlight rules, in parallel.
+async fn process_batch(app: &tauri::AppHandle, lines: Vec<(String, Option<u64>)>) -> Vec<Payload> {
     let state = app.state::<AppState>();
     let highlights_vec = state.highlights.lock().await.clone();
     let start_id = state
@@ -192,7 +209,7 @@ async fn process_batch(app: &tauri::AppHandle, lines: Vec<String>) -> Vec<Payloa
     lines
         .into_par_iter()
         .enumerate()
-        .map(|(i, line)| process_line(line, &highlights_vec, start_id + i as u64))
+        .map(|(i, (line, timestamp))| process_line(line, &highlights_vec, start_id + i as u64, timestamp))
         .collect()
 }
 
@@ -456,7 +473,12 @@ impl<'a> StyledLine<'a> {
 /// Rules are applied in order on the raw text: a `remove` rule changes the text later rules
 /// see, a whole-line `remove` stops processing. The HTML message is built at the end, with
 /// the log text escaped so it can never be interpreted as markup.
-fn process_line(input_line: String, highlights_vec: &[HighlightSettings], message_id: u64) -> Payload {
+fn process_line(
+    input_line: String,
+    highlights_vec: &[HighlightSettings],
+    message_id: u64,
+    timestamp: Option<u64>,
+) -> Payload {
     let mut line = StyledLine::new(input_line.clone());
     let mut matched_for_focus = false;
     let mut any_rule_matched = false;
@@ -503,13 +525,14 @@ fn process_line(input_line: String, highlights_vec: &[HighlightSettings], messag
         matched: matched_for_focus,
         rawline,
         removed_line,
+        timestamp,
     }
 }
 
 async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payload {
     let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
     let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
-    process_line(input_line, &highlights_vec, message_id)
+    process_line(input_line, &highlights_vec, message_id, Some(now_ms()))
 }
 
 /// Replaces the whole log with `lines`. `source` labels where they came from for
@@ -519,6 +542,8 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
 async fn add_logs_line(
     lines: Vec<String>,
     source: Option<String>,
+    // Reception times to keep when reprocessing (Refresh); `None` for a loaded file
+    timestamps: Option<Vec<Option<u64>>>,
     emitter: tauri::AppHandle,
 ) -> Result<(), String> {
     if let Some(path) = source {
@@ -529,6 +554,11 @@ async fn add_logs_line(
             .await;
     }
 
+    let mut timestamps = timestamps.unwrap_or_default().into_iter();
+    let lines = lines
+        .into_iter()
+        .map(|line| (line, timestamps.next().flatten()))
+        .collect();
     let results = process_batch(&emitter, lines).await;
     publish_replace(&emitter, results).await;
     Ok(())
@@ -536,7 +566,7 @@ async fn add_logs_line(
 
 #[tauri::command]
 async fn append_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
-    let results = process_batch(&emitter, lines).await;
+    let results = process_batch(&emitter, with_timestamp(lines, Some(now_ms()))).await;
     publish_append(&emitter, results).await;
     Ok(())
 }
@@ -717,6 +747,7 @@ async fn open_port(
                                             matched: false,
                                             rawline:None,
                                             removed_line: false,
+                                            timestamp: Some(now_ms()),
                                         },
                                     ).await;
                                     continue;
@@ -809,8 +840,8 @@ async fn watch_file(
         .set_source(LogSource::FileWatch { path: path.clone() })
         .await;
 
-    // Emit initial batch (replaces current logs)
-    let results = process_batch(&app, lines).await;
+    // Emit initial batch (replaces current logs); its reception time is unknown
+    let results = process_batch(&app, with_timestamp(lines, None)).await;
     publish_replace(&app, results).await;
 
     let active = state.file_watch_active.clone();
@@ -847,7 +878,7 @@ async fn watch_file(
 
                 let new_lines = splitter.feed(&text);
                 if !new_lines.is_empty() {
-                    let results = process_batch(&app_handle, new_lines).await;
+                    let results = process_batch(&app_handle, with_timestamp(new_lines, Some(now_ms()))).await;
                     publish_append(&app_handle, results).await;
                 }
             } else if new_size < last_size {
@@ -1078,7 +1109,7 @@ mod process_line_tests {
     fn process(line: &str, rules: Vec<HighlightMessage>) -> Payload {
         let settings: Vec<HighlightSettings> =
             rules.into_iter().filter_map(build_highlight_settings).collect();
-        process_line(line.to_string(), &settings, 1)
+        process_line(line.to_string(), &settings, 1, None)
     }
 
     /// Renders the HTML message as the user sees it: text with `{COLOR:...}` around colored
@@ -1311,6 +1342,13 @@ mod process_line_tests {
     fn multibyte_characters_are_kept_intact() {
         let payload = process("été ° ok", vec![rule("t", R), remove(rule("°", G))]);
         assert_eq!(rendered(&payload.message), "é{R:t}é  ok");
+    }
+
+    #[test]
+    fn timestamp_is_passed_through() {
+        let settings: Vec<HighlightSettings> = Vec::new();
+        assert_eq!(process_line("a".to_string(), &settings, 1, Some(42)).timestamp, Some(42));
+        assert_eq!(process_line("a".to_string(), &settings, 1, None).timestamp, None);
     }
 
     #[test]

@@ -83,7 +83,7 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 - Each row is 20px tall; rows with `removed_line = true` have height 0 (invisible)
 - Log text is rendered as HTML via `dangerouslySetInnerHTML` to support `<span style="color:...">` highlight markup. The backend escapes the log text, so only its own `<span>` tags are interpreted (see [Highlight processing pipeline](#highlight-processing-pipeline-parse_log_line))
 - Font: monospace, 0.875rem, color `#d4d4d4`, background `#1e1e1e`
-- Rows are as wide as their content (`width: max-content`, at least the terminal width), so the sticky line number gutter stays visible on long lines
+- Rows are as wide as their content (`width: max-content`, at least the terminal width), so the sticky gutter (line numbers, timestamps) stays visible on long lines
 
 ### Line numbers
 Enabled by the **Show line numbers** setting of the [Config tab](#config-tab). Like in a code editor, a gutter on the left of each row shows its line number.
@@ -91,7 +91,28 @@ Enabled by the **Show line numbers** setting of the [Config tab](#config-tab). L
 - **Main terminal**: the position of the line in the main log, starting at 1. Lines hidden by a `remove` + `whole_line` rule are counted, so the numbering skips them and a number always designates the same line whatever the rules. It restarts at 1 when the log is cleared or replaced by a file load; Refresh keeps the same numbers.
 - **Focus terminal**: the number of the same line in the main log, found by id (binary search, since ids increase along the log, with a linear search as fallback). Empty when that line is no longer in the main log.
 - **Rendering**: the number is CSS generated content (`::before { content: attr(data-line-number) }`), so it is neither selectable nor part of copied text, and Save never includes it. The gutter is right-aligned, gray (`#545a62`), as wide as the largest number of the main log plus 2 characters, and `position: sticky` on the left with an opaque background so text scrolled horizontally passes under it. It follows the selected row highlight.
+- **Separate gutter boxes**: the line number and the timestamp are two sibling sticky boxes, never one shared container. WebKit (the Tauri webview on Linux) fills the selection gap before selected text up to the start of its box: with a selectable timestamp in the same box, a multi-line selection painted over the line number. Copied text was not affected.
 - The terminal receives it through an optional `lineNumbers` prop (`{ numberOf(index), digits }`); without it, no gutter is rendered.
+
+### Timestamps
+Enabled by the **Show timestamps** setting of the [Config tab](#config-tab). Shows the reception time of each line in the gutter, after the line number.
+
+- **Reception time**: set by the backend in the `timestamp` field (ms since the Unix epoch) when the line is received:
+
+  | Source | Timestamp |
+  |---|---|
+  | Serial port | when the line terminator is read (non-ASCII byte messages: when the byte is read) |
+  | Followed file, appended lines | when the line is detected |
+  | System messages | when emitted |
+  | Demo append (`append_logs_line`) | when appended |
+  | Loaded file, initial content of a followed file, Demo regenerate | none (`null`), the real time is unknown |
+
+- **Refresh** sends the timestamps back with the raw lines (`add_logs_line` `timestamps`), so reprocessed lines keep them.
+- **Focus terminal**: a focus line is the same message, so it shows the same time.
+- **Format**: local time `HH:MM:SS.mmm` (`formatTimestamp` in `utils/timestamp.ts`). The column is 13 characters wide, empty for lines without timestamp. System messages also carry their own UTC `[HH:MM:SS]` in their text, which can differ from the local time shown in the gutter.
+- **Display only** (default): the timestamp is CSS generated content, like the line number: not selectable, not copied, not saved.
+- **In text** (**Include timestamps in copied and saved text**): the timestamp is real text followed by a space, so it is selectable and copied as `HH:MM:SS.mmm line`. Save writes the same prefix on lines that have a timestamp, in both terminals. The line number stays out of the selection and the copied text.
+- The terminal receives it through an optional `timestamps` prop (`{ inText }`).
 
 ### Auto-scroll
 - When enabled, the list automatically scrolls to the last row when new logs arrive
@@ -121,6 +142,7 @@ type SerialMessage = {
   matched: boolean;     // true if matched a focus rule
   rawline?: string;     // original unprocessed line (present if a rule matched or message differs from it)
   removed_line?: boolean; // true if the whole line was removed
+  timestamp?: number | null; // reception time in ms since the Unix epoch, null when unknown (loaded file)
 };
 ```
 
@@ -166,6 +188,8 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | Setting | Default | Effect |
 |---|---|---|
 | **Show line numbers** (checkbox) | off | Shows a [line number gutter](#line-numbers) in the main and focus terminals |
+| **Show timestamps** (checkbox) | off | Shows the [reception time](#timestamps) of each line in the main and focus terminals |
+| **Include timestamps in copied and saved text** (checkbox, indented) | off | Makes the timestamp selectable and part of copied and saved text. Disabled while timestamps are hidden |
 
 Settings are held in `page.tsx` through the `useAppConfig` hook, and saved to `app_config.json` in `BaseDirectory.AppConfig` on every change. On mount, the file is read and merged over the defaults (`DEFAULT_APP_CONFIG`), so settings added later get their default value; a missing file keeps the defaults.
 
@@ -344,8 +368,8 @@ Stops the MCP server and its sessions. Emits the system message `MCP server stop
 #### `get_mcp_status() -> McpStatus`
 Returns `{ running, url, port }`.
 
-#### `add_logs_line(lines: Vec<String>)`
-Processes a batch of raw lines through `parse_log_line` and emits:
+#### `add_logs_line(lines: Vec<String>, source?: String, timestamps?: Vec<Option<u64>>)`
+`source` sets the log store source to `file` (file load). `timestamps` gives the reception time of each line, used by Refresh to keep them; without it, lines have no timestamp. Processes a batch of raw lines through `parse_log_line` and emits:
 - `serial-datas` — all processed lines
 - `serial-datas-focus` — only lines that matched a focus rule
 
@@ -383,6 +407,7 @@ struct Payload {
     matched: bool,
     rawline: Option<String>,
     removed_line: bool,
+    timestamp: Option<u64>, // reception time in ms since the Unix epoch, None when unknown
 }
 ```
 
@@ -519,6 +544,8 @@ app/
   types/
     SerialMessage.tsx        — SerialMessage type definition
     AppConfig.tsx            — Application settings type and defaults
+  utils/
+    timestamp.ts             — Timestamp formatting
 src-tauri/
   src/
     lib.rs                   — All Rust backend logic

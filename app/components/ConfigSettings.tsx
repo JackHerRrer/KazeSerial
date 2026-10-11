@@ -24,6 +24,28 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           />
         }
       />
+      <FormControlLabel
+        label="Show timestamps"
+        control={
+          <Checkbox
+            size="small"
+            checked={config.showTimestamps}
+            onChange={(e) => onConfigChange({ showTimestamps: e.target.checked })}
+          />
+        }
+      />
+      <FormControlLabel
+        label="Include timestamps in copied and saved text"
+        disabled={!config.showTimestamps}
+        sx={{ pl: 3 }}
+        control={
+          <Checkbox
+            size="small"
+            checked={config.timestampsInText}
+            onChange={(e) => onConfigChange({ timestampsInText: e.target.checked })}
+          />
+        }
+      />
     </Box>
   );
 };
