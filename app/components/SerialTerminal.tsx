@@ -77,8 +77,9 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
 }) => {
   const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
 
-  // Insert marker button: a single button over the list, at a fixed distance from its right
-  // edge so horizontal scrolling does not move it, at the height of the row under the pointer
+  // Row under the pointer, highlighted. The insert marker button is a single button over the list,
+  // at a fixed distance from its right edge so horizontal scrolling does not move it, at the
+  // height of that row.
   const boxRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [hoveredRow, setHoveredRow] = useState<{ id: number; top: number } | null>(null);
@@ -90,7 +91,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
     const box = boxRef.current;
     const pointer = pointerRef.current;
     let next: { id: number; top: number } | null = null;
-    if (onInsertMarker && box && pointer) {
+    if (box && pointer) {
       // Only the rendered rows, so a few dozen
       const row = Array.from(box.querySelectorAll<HTMLElement>('.serial-terminal-row')).find(element => {
         const rect = element.getBoundingClientRect();
@@ -175,7 +176,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
             return line?.removed_line ? 0 : 20;
           }}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, lineNumbers, timestamps, arrival, search }}
+          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, hoveredLineId: hoveredRow?.id, lineNumbers, timestamps, arrival, search }}
           overscanCount={10}
           listRef={listRef}
           onScroll={(event) => {

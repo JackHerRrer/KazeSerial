@@ -10,6 +10,8 @@ import { domRanges, highlightNamed, lineRanges } from "../utils/search";
 import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils/timestamp";
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
+// Row under the pointer: lighter than the selection, layered over the row background
+const HOVERED_ROW_BACKGROUND = 'rgba(255,255,255,0.06)';
 // Marker lines: text color, and a light tint of it as row background
 export const MARKER_COLOR = '#c586c0';
 const MARKER_BACKGROUND = 'rgba(197,134,192,0.12)';
@@ -20,6 +22,7 @@ export default function RowComponent({
   style,
   onClickRow,
   selectedLineId,
+  hoveredLineId,
   lineNumbers,
   timestamps,
   arrival,
@@ -28,6 +31,7 @@ export default function RowComponent({
   serialMessages: SerialMessage[];
   onClickRow?: (message_id: number) => void;
   selectedLineId?: number | null;
+  hoveredLineId?: number;
   lineNumbers?: LineNumbers;
   timestamps?: Timestamps;
   arrival?: Arrival;
@@ -75,6 +79,9 @@ export default function RowComponent({
     return () => added.forEach(({ highlight, range }) => highlight.delete(range));
   }, [searchRanges, currentOccurrence]);
   const isSelected = selectedLineId === line.id;
+  // The selection already stands out more, so a selected row gets no hover tint
+  const isHovered = !isSelected && hoveredLineId === line.id;
+  const hoverLayer = `linear-gradient(${HOVERED_ROW_BACKGROUND}, ${HOVERED_ROW_BACKGROUND})`;
   const timestamp = timestamps && line.timestamp != null && isTimestampShown(serialMessages, index, timestamps.inactivityMs)
     ? formatTimestamp(line.timestamp, timestamps.format)
     : '';
@@ -89,7 +96,7 @@ export default function RowComponent({
     // Opaque, matching the row selection
     background: isSelected
       ? `linear-gradient(${SELECTED_ROW_BACKGROUND}, ${SELECTED_ROW_BACKGROUND}), #1e1e1e`
-      : '#1e1e1e',
+      : isHovered ? `${hoverLayer}, #1e1e1e` : '#1e1e1e',
   } as const;
   const timestampLeft = lineNumbers ? `${lineNumbers.digits + 2}ch` : 0;
   return (
@@ -98,7 +105,7 @@ export default function RowComponent({
       className="serial-terminal-row"
       data-line-id={line.id}
       // Rows as wide as their content so the sticky gutter stays visible on long lines
-      style={{ ...style, width: 'max-content', minWidth: '100%', whiteSpace: 'pre', backgroundColor: isSelected ? SELECTED_ROW_BACKGROUND : line.marker ? MARKER_BACKGROUND : undefined, cursor: 'pointer' }}
+      style={{ ...style, width: 'max-content', minWidth: '100%', whiteSpace: 'pre', backgroundColor: isSelected ? SELECTED_ROW_BACKGROUND : line.marker ? MARKER_BACKGROUND : undefined, backgroundImage: isHovered ? hoverLayer : undefined, cursor: 'pointer' }}
       onClick={onClickRow ? () => {
         if (window.getSelection()?.toString()) return;
         onClickRow(line.id);

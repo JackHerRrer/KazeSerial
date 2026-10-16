@@ -90,7 +90,7 @@ Enabled by the **Show line numbers** setting of the [Config tab](#config-tab). L
 
 - **Main terminal**: the position of the line in the main log, starting at 1. Lines hidden by a `remove` + `whole_line` rule are counted, so the numbering skips them and a number always designates the same line whatever the rules. It restarts at 1 when the log is cleared or replaced by an opened file; Refresh keeps the same numbers.
 - **Focus terminal**: the number of the same line in the main log, found by id (binary search, since ids increase along the log, with a linear search as fallback). Markers are skipped by the binary search, since a marker inserted above a line has a larger id than the lines around it. Empty when that line is no longer in the main log.
-- **Rendering**: the number is CSS generated content (`::before { content: attr(data-line-number) }`), so it is neither selectable nor part of copied text, and Save never includes it. The gutter is right-aligned, gray (`#545a62`), as wide as the largest number of the main log plus 2 characters, and `position: sticky` on the left with an opaque background so text scrolled horizontally passes under it. It follows the selected row highlight.
+- **Rendering**: the number is CSS generated content (`::before { content: attr(data-line-number) }`), so it is neither selectable nor part of copied text, and Save never includes it. The gutter is right-aligned, gray (`#545a62`), as wide as the largest number of the main log plus 2 characters, and `position: sticky` on the left with an opaque background so text scrolled horizontally passes under it. It follows the selected and hovered row highlights.
 - **Separate gutter boxes**: the line number and the timestamp are two sibling sticky boxes, never one shared container. WebKit (the Tauri webview on Linux) fills the selection gap before selected text up to the start of its box: with a selectable timestamp in the same box, a multi-line selection painted over the line number. Copied text was not affected.
 - The terminal receives it through an optional `lineNumbers` prop (`{ numberOf(index), digits }`); without it, no gutter is rendered.
 
@@ -161,6 +161,7 @@ A marker is a numbered line inserted by the user to delimit a part of the log, e
 
 ### Line selection / highlight
 - Clicking a line highlights the entire row with `rgba(255,255,255,0.12)` background
+- The row under the pointer is highlighted more lightly, with `rgba(255,255,255,0.06)` layered over its background (so a marker keeps its tint), in both terminals; a selected row keeps only the selection highlight. The row is the one at the pointer height (see [Markers](#markers)), so it stays highlighted while the pointer is over the insert marker button. The line number and timestamp gutter follow it
 - Clicking the same line again deselects it
 - Text selection (copy-paste) is preserved: if `window.getSelection().toString()` is non-empty when `mouseup/click` fires, the click is ignored
 - The selected line ID can be controlled externally via a `selectedLineId` prop (used by the focus panel)
