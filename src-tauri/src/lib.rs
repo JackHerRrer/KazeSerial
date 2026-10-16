@@ -1,7 +1,9 @@
+mod log_file;
 mod log_store;
 mod mcp;
 mod tail_splitter;
 
+use log_file::{LogFileSettings, LogFiles};
 use log_store::{LogRecord, LogSource, LogStore};
 use regex::Regex;
 use rayon::prelude::*;
@@ -162,6 +164,8 @@ struct AppState {
     message_id_counter: Arc<AtomicU64>,
     /// Number of the last marker inserted, so markers are numbered 1, 2, 3...
     marker_counter: Arc<AtomicU64>,
+    /// Automatic save of the serial log to files
+    log_files: Arc<std::sync::Mutex<LogFiles>>,
     file_watch_active: Arc<AtomicBool>,
     /// Every emitted line is recorded here so the MCP server can serve the same
     /// log the user sees. The webview state is no longer the only copy.
@@ -224,13 +228,23 @@ async fn publish_append(app: &tauri::AppHandle, results: Vec<Payload>) {
     let _ = app.emit("serial-datas-focus-append", focus);
 }
 
-/// Records a single line and emits it as a `serial-data` event.
+/// Records a single line, writes it to the log file and emits it as a `serial-data` event.
+/// Used for the lines received from the serial port, system messages and markers appended at
+/// the end of the log, which are exactly the lines saved to [log files](log_file).
 async fn publish_one(app: &tauri::AppHandle, payload: Payload) {
-    app.state::<AppState>()
-        .log_store
-        .append(vec![record_of(&payload)])
-        .await;
+    let state = app.state::<AppState>();
+    let record = record_of(&payload);
+    let log_file_error = state
+        .log_files
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .write(&record.text, payload.timestamp);
+    state.log_store.append(vec![record]).await;
     let _ = app.emit("serial-data", payload);
+    // Not written to the file: writing is paused after a failure
+    if let Some(error) = log_file_error {
+        Box::pin(emit_system_msg(app, format!("Log file error: {}", error))).await;
+    }
 }
 
 /// Processes `lines` and their reception times through the current highlight rules, in parallel.
@@ -625,6 +639,29 @@ async fn insert_marker(
     Ok(payload)
 }
 
+/// Settings of the automatic save of the serial log, sent by the Config tab at launch and on
+/// every change, see [`log_file`].
+#[tauri::command]
+fn set_log_file_settings(settings: LogFileSettings, state: tauri::State<'_, AppState>) {
+    state
+        .log_files
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .set_settings(settings);
+}
+
+/// Folder of the log files when none is chosen, shown in the Config tab.
+#[tauri::command]
+fn get_default_log_folder(state: tauri::State<'_, AppState>) -> String {
+    state
+        .log_files
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .default_folder()
+        .to_string_lossy()
+        .to_string()
+}
+
 #[tauri::command]
 async fn append_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
     let results = process_batch(&emitter, with_timestamp(lines, Some(now_ms()))).await;
@@ -770,6 +807,12 @@ async fn open_port(
         Ok(port) => {
             *state.serial_connection.lock().await = Some(port);
             state.serial_connected.store(true, Ordering::SeqCst);
+            // A new connection starts a new log file; an automatic reconnection continues it
+            state
+                .log_files
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .start_session();
             state
                 .log_store
                 .set_source(LogSource::Serial {
@@ -1229,6 +1272,8 @@ pub fn run() {
         highlights: Arc::new(Mutex::new(Vec::new())),
         message_id_counter: Arc::new(AtomicU64::new(1)),
         marker_counter: Arc::new(AtomicU64::new(0)),
+        // Default folder set in `setup`, once the paths are known
+        log_files: Arc::new(std::sync::Mutex::new(LogFiles::new(std::path::PathBuf::new()))),
         file_watch_active: Arc::new(AtomicBool::new(false)),
         log_store: Arc::new(LogStore::new()),
         serial_connected: Arc::new(AtomicBool::new(false)),
@@ -1242,6 +1287,16 @@ pub fn run() {
     builder
         .setup(|app| {
             create_config_dir(app);
+
+            // Default log file folder: in the user data folder, named after the application
+            // rather than its identifier
+            if let Ok(data_dir) = app.path().data_dir() {
+                app.state::<AppState>()
+                    .log_files
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .set_default_folder(data_dir.join("KazeSerial").join("logs"));
+            }
 
             // `KAZESERIAL_MCP_PORT` starts the MCP server at launch, so an agent-driven
             // session does not require clicking the toolbar button first. Use 0 to let
@@ -1270,6 +1325,8 @@ pub fn run() {
             clear_logs,
             add_marker,
             insert_marker,
+            set_log_file_settings,
+            get_default_log_folder,
             open_file,
             watch_file,
             stop_file_watch,

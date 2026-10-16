@@ -23,6 +23,7 @@ The app uses a **dark theme** throughout.
 | Async runtime | Tokio |
 | Persistence | `tauri-plugin-fs` (AppConfig directory) |
 | File dialogs | `tauri-plugin-dialog` |
+| Local time (log files) | `chrono` crate |
 
 ---
 
@@ -240,10 +241,14 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | **Format** (select, indented) | `HH:mm:ss` | Timestamp format: `HH:mm:ss`, `HH:mm:ss.SSS`, `YYYY-MM-DD HH:mm:ss.SSS` or **Custom…**, which shows a **Pattern** field with the available codes and a preview. *Custom* stays selected while editing, even if the pattern matches a preset. See [Timestamps](#timestamps) for the codes |
 | **Highlight new lines** (checkbox) + **Duration (ms)** (`IntegerField`) + color button | on, 3000, `#7896b429` | Highlights lines as they arrive, fading out over the duration, see [New line highlight](#new-line-highlight). The color button opens a picker with an alpha slider (`ColorPickerButton` with `alpha`), the alpha setting how visible the highlight is. Duration and color are disabled while the checkbox is off |
 | **Auto-reconnect serial port** (checkbox) | on | When the serial port is lost (device reset, unplugged, reflashed), waits for it to come back and reopens it instead of disconnecting, see [`open_port`](#open_portport_name-port_description-baud_rate-auto_reconnect). Applied on the next Connect |
+| **Save logs to files** (checkbox, after a separator) | on | Saves the serial log to files as it arrives, see [Log Files](#log-files). A caption under it summarizes what is written. Disables the settings below while off |
+| **Folder** (read-only field, indented) + **Choose…** + **Default** buttons | default folder | Folder of the log files. Shows the default folder (given by `get_default_log_folder`, with a *Default folder* caption) until one is chosen with **Choose…** (folder dialog). **Default** (shown only when a folder is chosen) goes back to the default folder |
+| **Rotate files** (checkbox, indented) | on | Starts a new file when the current one is full, and deletes the oldest files beyond the maximum |
+| **Max files** + **Max lines per file** (`IntegerField`, indented twice) | 10, 10 000 | Rotation limits, integers ≥ 1. Disabled while rotation is off |
 | **Enable MCP server** (checkbox, after a separator) | off | Starts or stops the [MCP server](#mcp-server) with `start_mcp_server` / `stop_mcp_server`. Reflects the real server state, read with `get_mcp_status` on mount (the server survives webview reloads and can be started by `KAZESERIAL_MCP_PORT`). **Not saved**: the server is off at each launch. Shows `Listening on {url}` while running, or the start error (e.g. port in use) |
 | **Port** (number field) | 9339 | MCP server port, 1–65535, saved. Applied on Enter or when the field loses focus: an invalid value is dropped, and a running server is restarted on the new port (`McpSettings` component) |
 
-Settings are held in `page.tsx` through the `useAppConfig` hook, and saved to `app_config.json` in `BaseDirectory.AppConfig` on every change. On mount, the file is read and merged over the defaults (`DEFAULT_APP_CONFIG`), so settings added later get their default value; a missing file keeps the defaults.
+Settings are held in `page.tsx` through the `useAppConfig` hook, and saved to `app_config.json` in `BaseDirectory.AppConfig` on every change. The log file settings (`logFileEnabled`, `logFileFolder` — empty for the default folder —, `logFileRotation`, `logFileMaxFiles`, `logFileMaxLines`) and the timestamp settings are also sent to the backend with `set_log_file_settings` at launch and whenever one of them changes. On mount, the file is read and merged over the defaults (`DEFAULT_APP_CONFIG`), so settings added later get their default value; a missing file keeps the defaults.
 
 ### Tab behavior
 - **Inactive tabs stay mounted**: they are only hidden, so switching tabs keeps their internal state (open serial connection, loaded highlight rules).
@@ -376,6 +381,7 @@ struct AppState {
     highlights: Arc<Mutex<Vec<HighlightSettings>>>,
     message_id_counter: Arc<AtomicU64>,
     marker_counter: Arc<AtomicU64>,    // number of the last marker inserted
+    log_files: Arc<std::sync::Mutex<LogFiles>>, // automatic save of the serial log, see Log Files
     file_watch_active: Arc<AtomicBool>,
     log_store: Arc<LogStore>,          // copy of every emitted line, served by MCP
     serial_connected: Arc<AtomicBool>, // lock-free mirror of serial_connection.is_some()
@@ -392,7 +398,7 @@ Returns available serial ports. For USB ports, the label is `manufacturer + prod
 #### `open_port(port_name, port_description?, baud_rate, auto_reconnect?)`
 Opens the serial port and spawns a Tokio task that reads byte by byte, assembles lines (splitting on `\r\n`, `\n\r`, `\r`, or `\n`), and processes each line through `parse_log_line`. Non-ASCII bytes are emitted as hex strings (e.g. `0x1f `). Processed lines are emitted as `serial-data` events.
 
-On success, emits a system message: `[HH:MM:SS] KazeSerial: Connection to {port} ({description}) established`.
+On success, starts a new [log file](#log-files) session, then emits a system message: `[HH:MM:SS] KazeSerial: Connection to {port} ({description}) established`.
 On failure, emits a system message: `[HH:MM:SS] KazeSerial: Connection failed: {error}` and returns an error.
 If the read loop encounters a non-timeout I/O error (device disconnected):
 - **without `auto_reconnect`** (default): emits `[HH:MM:SS] KazeSerial: Connection to {port} lost` and `serial-disconnected`, and exits the loop;
@@ -441,6 +447,25 @@ Appends a numbered marker line `----- MARK n -----` (`marker_counter`) as a `ser
 
 #### `insert_marker(before_id, timestamp?) -> Payload`
 Creates a numbered marker line with the given timestamp and inserts it in the log store just before the line `before_id` (nothing is recorded when that line is no longer in the store). Emits nothing: the marker is returned and the frontend inserts it in the main and focus lists, see [Markers](#markers).
+
+#### `set_log_file_settings(settings: LogFileSettings)`
+Applies the [log file](#log-files) settings, sent by the frontend at launch and on every change:
+
+```rust
+struct LogFileSettings {        // camelCase in JSON
+    enabled: bool,
+    folder: Option<String>,     // None or empty: default folder
+    rotation: bool,
+    max_files: usize,
+    max_lines: usize,
+    timestamps_in_text: bool,   // showTimestamps && timestampsInText
+    timestamp_format: String,
+    inactivity_ms: Option<u64>, // Some when timestampsAfterInactivityOnly
+}
+```
+
+#### `get_default_log_folder() -> String`
+Folder of the log files when none is chosen, shown in the Config tab.
 
 #### `open_file(path)`
 Reads the file once and replaces the logs with its lines (`serial-datas` / `serial-datas-focus`), without timestamps. The file is decoded as UTF-8 (invalid bytes replaced with `U+FFFD`) and split like a [followed file](#file-follow-tail--f) (`\n` separator, trailing `\r` stripped, empty lines kept); the last line is kept even without a trailing newline. Sets the log store source to `file`. Returns an error if the file cannot be read.
@@ -539,6 +564,7 @@ Format: `[HH:MM:SS] KazeSerial: {message}` where the timestamp is UTC wall-clock
 | Port closed by user | `Connection closed` |
 | MCP server started | `MCP server listening on {url}` |
 | MCP server stopped | `MCP server stopped` |
+| Writing a [log file](#log-files) failed (once, until writing resumes) | `Log file error: {error}` |
 
 Implemented via `emit_system_msg(app, msg)` which allocates a message ID from the shared counter, processes the line with `process_line`, records it in the log store and emits a `serial-data` event.
 
@@ -561,6 +587,22 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 - It tracks the current source: `none`, `serial`, `file` (opened once with `open_file`) or `file_watch` (followed).
 - Records are in log order. Ids increase along the log, except for a marker inserted above a line, whose new id is larger than the ids around it; `wait_for_logs` and `wait_for_pattern` walk records in id order.
 - Appends and insertions wake up waiting MCP calls, so `wait_for_logs` and `wait_for_pattern` block instead of polling.
+
+---
+
+## Log Files
+
+Automatic save of the serial log to files (`log_file.rs`, `LogFiles` in `AppState`), set in the [Config tab](#config-tab). Written by the backend as lines are published, so nothing is lost when the webview is busy.
+
+- **Lines written**: the lines published one by one with `publish_one`, which are the lines received from the serial port (non-ASCII bytes included, as their hex strings), the [system messages](#system-messages) and the markers appended at the end of the log (Ctrl+M, toolbar button). Lines of an opened or followed file (already on disk), demo lines and markers [inserted above a line](#markers) (the file is never rewritten) are not written. Clearing the logs or Refresh does not change the files.
+- **Sessions**: each successful `open_port` starts a session, so the next line opens a new file; an automatic reconnection continues the same file. Nothing is written before the first connection since launch (no file holding only e.g. `MCP server listening`). After a disconnection, lines (system messages, markers) still go to the last file.
+- **Folder**: the chosen folder, or by default `KazeSerial/logs` in the user data folder (`app.path().data_dir()`: `~/.local/share/KazeSerial/logs` on Linux, `%APPDATA%\KazeSerial\logs` on Windows). The installation folder is not used, as it is usually read-only (`.deb`, `.msi`, AppImage). The folder is created when missing.
+- **File names**: `kazeserial_YYYY-MM-DD_HH-mm-ss.log`, the local time the file is created, with a `_2`, `_3`... suffix when the name is taken (files created within the same second).
+- **Line format**: as written by Save: the raw line (`rawline`, else `message`, without colors, lines removed by a rule included), with its line terminator replaced by `\n`. With **Show timestamps** and **Include timestamps in copied and saved text**, it is prefixed with the timestamp column in the configured format, local time; with **Only after inactivity**, only on lines arriving at least the delay after the previous line of the file, blanks of the same width otherwise. Every line is flushed, so the file is complete if the application stops.
+- **Rotation** (on): a file holds at most **Max lines per file** lines, then the next line opens a new file. After a file is created, only the **Max files** most recent `kazeserial_*.log` of the folder are kept, files of previous sessions and the new file included: the oldest (by modification time, then name) are deleted. Other files of the folder are never touched; a file that cannot be deleted is kept.
+- **Rotation** (off): one file per session, without line limit, and no file is deleted.
+- **Settings changes**: disabling the save or changing the folder closes the current file (the next line opens a new one in the folder); other changes apply to the current file.
+- **Errors**: when creating or writing a file fails (folder not writable, disk full...), the system message `Log file error: {error}` is shown once, and nothing more is written until the next session or settings change, which retry with a new file. Lines published in the meantime are not written later.
 
 ---
 
@@ -640,6 +682,7 @@ src-tauri/
     lib.rs                   — All Rust backend logic
     tail_splitter.rs         — Line splitting and UTF-8 decoding for file follow
     log_store.rs             — Backend copy of the log served by MCP
+    log_file.rs              — Automatic save of the serial log to files, with rotation
     mcp.rs                   — Embedded MCP server and its tools
     main.rs                  — Tauri entry point
   tauri.conf.json

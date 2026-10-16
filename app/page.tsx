@@ -176,6 +176,25 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Log files are written by the backend, which gets their settings at launch and on every
+  // change. Lines are written as Save writes them, so it also gets the timestamp settings.
+  const { logFileEnabled, logFileFolder, logFileRotation, logFileMaxFiles, logFileMaxLines } = config;
+  const { showTimestamps, timestampsInText, timestampFormat, timestampsAfterInactivityOnly, timestampInactivityMs } = config;
+  useEffect(() => {
+    const settings = {
+      enabled: logFileEnabled,
+      folder: logFileFolder || null,
+      rotation: logFileRotation,
+      maxFiles: logFileMaxFiles,
+      maxLines: logFileMaxLines,
+      timestampsInText: showTimestamps && timestampsInText,
+      timestampFormat,
+      inactivityMs: timestampsAfterInactivityOnly ? timestampInactivityMs : null,
+    };
+    invoke<void>('set_log_file_settings', { settings }).catch((err: unknown) => console.error(err));
+  }, [logFileEnabled, logFileFolder, logFileRotation, logFileMaxFiles, logFileMaxLines,
+    showTimestamps, timestampsInText, timestampFormat, timestampsAfterInactivityOnly, timestampInactivityMs]);
+
   // Inserts a marker just above a line of the main log, with the timestamp of the line above it
   // (none for the first line). In the focus log, it goes after the closest focus line above it,
   // or else before the closest focus line below it

@@ -33,6 +33,7 @@ Kaze Serial is a modern, high-performance serial terminal application built with
 - **Export/import**:
   - **export**: 
     - Export raw log (without highligh and sentence removal applied) to a file
+    - Automatic save of the serial log to files, with rotation (Config tab)
     - Export the patterns for future use
   - **import**: 
     - Re-import previous log file (File tab)

@@ -1,7 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from '@mui/material/TextField';
@@ -10,6 +12,8 @@ import Divider from '@mui/material/Divider';
 import McpSettings from './McpSettings';
 import ColorPickerButton from './ColorPickerButton';
 import Tooltip from '@mui/material/Tooltip';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { AppConfig } from '../types/AppConfig';
 import { formatTimestamp, TIMESTAMP_FORMATS } from '../utils/timestamp';
 
@@ -21,18 +25,20 @@ interface IntegerFieldProps {
   label: string;
   value: number;
   disabled?: boolean;
+  min?: number;
+  step?: number;
   onChange: (value: number) => void;
 }
 
-/** Field for an integer ≥ 0: valid values are saved as typed, the saved value is shown again on blur */
-const IntegerField: React.FC<IntegerFieldProps> = ({ label, value, disabled, onChange }) => {
+/** Field for an integer ≥ `min` (0 by default): valid values are saved as typed, the saved value is shown again on blur */
+const IntegerField: React.FC<IntegerFieldProps> = ({ label, value, disabled, min = 0, step = 100, onChange }) => {
   // Text being typed, kept while it is not a valid value
   const [draft, setDraft] = useState<string | null>(null);
 
   const onTextChange = (text: string) => {
     setDraft(text);
     const number = Number(text);
-    if (text.trim() !== '' && Number.isInteger(number) && number >= 0) {
+    if (text.trim() !== '' && Number.isInteger(number) && number >= min) {
       onChange(number);
     }
   };
@@ -46,7 +52,7 @@ const IntegerField: React.FC<IntegerFieldProps> = ({ label, value, disabled, onC
       disabled={disabled}
       onChange={(e) => onTextChange(e.target.value)}
       onBlur={() => setDraft(null)}
-      slotProps={{ htmlInput: { min: 0, step: 100 } }}
+      slotProps={{ htmlInput: { min, step } }}
       sx={{ width: 120 }}
     />
   );
@@ -61,6 +67,20 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
   // "Custom" stays selected while editing, even if the typed pattern matches a preset
   const [customFormat, setCustomFormat] = useState(false);
   const isCustomFormat = customFormat || !TIMESTAMP_FORMATS.includes(config.timestampFormat);
+
+  // Folder of the log files when none is chosen, given by the backend
+  const [defaultLogFolder, setDefaultLogFolder] = useState('');
+  useEffect(() => {
+    invoke<string>('get_default_log_folder')
+      .then(setDefaultLogFolder)
+      .catch((err: unknown) => console.error(err));
+  }, []);
+  const logFolder = config.logFileFolder || defaultLogFolder;
+
+  const chooseLogFolder = async () => {
+    const folder = await open({ directory: true, defaultPath: logFolder || undefined });
+    if (typeof folder === 'string') onConfigChange({ logFileFolder: folder });
+  };
 
   const onFormatSelect = (value: string) => {
     setCustomFormat(value === CUSTOM_FORMAT);
@@ -189,6 +209,71 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           />
         }
       />
+      <Divider sx={{ my: 2 }} />
+      <FormControlLabel
+        label="Save logs to files"
+        control={
+          <Checkbox
+            size="small"
+            checked={config.logFileEnabled}
+            onChange={(e) => onConfigChange({ logFileEnabled: e.target.checked })}
+          />
+        }
+      />
+      <Typography variant="caption" sx={{ pl: 4, pb: 1, color: 'text.secondary' }}>
+        Lines received from the serial port, system messages and markers, as Save writes them. A new file on each connection.
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, pl: 3 }}>
+        <TextField
+          label="Folder"
+          size="small"
+          value={logFolder}
+          disabled={!config.logFileEnabled}
+          helperText={config.logFileFolder ? undefined : 'Default folder'}
+          slotProps={{ input: { readOnly: true } }}
+          sx={{ flex: 1, minWidth: 0 }}
+        />
+        <Button variant="outlined" disabled={!config.logFileEnabled} onClick={chooseLogFolder} sx={{ height: 40 }}>
+          Choose…
+        </Button>
+        {config.logFileFolder && (
+          <Tooltip title="Use the default folder" placement="top" arrow>
+            <Button disabled={!config.logFileEnabled} onClick={() => onConfigChange({ logFileFolder: '' })} sx={{ height: 40 }}>
+              Default
+            </Button>
+          </Tooltip>
+        )}
+      </Box>
+      <FormControlLabel
+        label="Rotate files"
+        disabled={!config.logFileEnabled}
+        sx={{ pl: 3, pt: 1 }}
+        control={
+          <Checkbox
+            size="small"
+            checked={config.logFileRotation}
+            onChange={(e) => onConfigChange({ logFileRotation: e.target.checked })}
+          />
+        }
+      />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 6, pt: 1 }}>
+        <IntegerField
+          label="Max files"
+          value={config.logFileMaxFiles}
+          min={1}
+          step={1}
+          disabled={!config.logFileEnabled || !config.logFileRotation}
+          onChange={(logFileMaxFiles) => onConfigChange({ logFileMaxFiles })}
+        />
+        <IntegerField
+          label="Max lines per file"
+          value={config.logFileMaxLines}
+          min={1}
+          step={1000}
+          disabled={!config.logFileEnabled || !config.logFileRotation}
+          onChange={(logFileMaxLines) => onConfigChange({ logFileMaxLines })}
+        />
+      </Box>
       <Divider sx={{ my: 2 }} />
       <McpSettings port={config.mcpPort} onPortChange={(mcpPort) => onConfigChange({ mcpPort })} />
     </Box>

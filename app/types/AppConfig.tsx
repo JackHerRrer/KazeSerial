@@ -19,6 +19,13 @@ export type AppConfig = {
   newLineHighlightColor: string; // #rrggbbaa, the alpha sets how visible it is
   // When the serial port is lost, wait for it to come back and reopen it (applied on Connect)
   autoReconnect: boolean;
+  // Automatic save of the serial log to files, written by the backend (see log_file.rs)
+  logFileEnabled: boolean;
+  logFileFolder: string; // empty for the default folder
+  // A file holds at most `logFileMaxLines` lines, and only the `logFileMaxFiles` most recent are kept
+  logFileRotation: boolean;
+  logFileMaxFiles: number;
+  logFileMaxLines: number;
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -33,4 +40,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   newLineHighlightMs: 3000,
   newLineHighlightColor: '#7896b429',
   autoReconnect: true,
+  logFileEnabled: true,
+  logFileFolder: '',
+  logFileRotation: true,
+  logFileMaxFiles: 10,
+  logFileMaxLines: 10000,
 };
