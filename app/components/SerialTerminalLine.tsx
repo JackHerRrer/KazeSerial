@@ -11,7 +11,7 @@ import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
 // Marker lines: text color, and a light tint of it as row background
-const MARKER_COLOR = '#c586c0';
+export const MARKER_COLOR = '#c586c0';
 const MARKER_BACKGROUND = 'rgba(197,134,192,0.12)';
 
 export default function RowComponent({
@@ -96,6 +96,7 @@ export default function RowComponent({
     <div
       ref={rowRef}
       className="serial-terminal-row"
+      data-line-id={line.id}
       // Rows as wide as their content so the sticky gutter stays visible on long lines
       style={{ ...style, width: 'max-content', minWidth: '100%', whiteSpace: 'pre', backgroundColor: isSelected ? SELECTED_ROW_BACKGROUND : line.marker ? MARKER_BACKGROUND : undefined, cursor: 'pointer' }}
       onClick={onClickRow ? () => {

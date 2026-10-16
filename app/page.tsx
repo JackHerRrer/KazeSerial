@@ -52,13 +52,20 @@ const findLogIndex = (lines: SerialMessage[], id: number): number => {
   let low = 0;
   let high = lines.length - 1;
   while (low <= high) {
-    const middle = (low + high) >> 1;
+    let middle = (low + high) >> 1;
+    // A marker inserted in the middle of the log has a larger id than the lines around it, so
+    // the next line that is not a marker is compared instead
+    while (middle < high && lines[middle].marker && lines[middle].id !== id) middle++;
     if (lines[middle].id === id) return middle;
     if (lines[middle].id < id) low = middle + 1;
     else high = middle - 1;
   }
   return lines.findIndex(line => line.id === id);
 };
+
+// Copy of `lines` with `line` inserted at `index`
+const insertAt = (lines: SerialMessage[], index: number, line: SerialMessage): SerialMessage[] =>
+  [...lines.slice(0, index), line, ...lines.slice(index)];
 
 const generateDemoLogs = (count: number): string[] => {
   const result: string[] = [];
@@ -168,6 +175,39 @@ export default function Home() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Inserts a marker just above a line of the main log, with the timestamp of the line above it
+  // (none for the first line). In the focus log, it goes after the closest focus line above it,
+  // or else before the closest focus line below it
+  const insertMarkerAbove = (lineId: number) => {
+    const index = findLogIndex(logs, lineId);
+    if (index < 0) return;
+    let focusAboveId: number | undefined;
+    for (let i = index - 1; i >= 0 && focusAboveId === undefined; i--) {
+      if (logs[i].matched) focusAboveId = logs[i].id;
+    }
+    let focusBelowId: number | undefined;
+    for (let i = index; i < logs.length && focusAboveId === undefined && focusBelowId === undefined; i++) {
+      if (logs[i].matched) focusBelowId = logs[i].id;
+    }
+    const timestamp = index > 0 ? logs[index - 1].timestamp ?? null : null;
+    invoke<SerialMessage>('insert_marker', { beforeId: lineId, timestamp })
+      .then((payload) => {
+        const marker = { ...payload, arrivedAt: Date.now() };
+        // Positions are looked up again, the logs may have changed meanwhile
+        setLogs(prev => {
+          const at = findLogIndex(prev, lineId);
+          return at < 0 ? prev : insertAt(prev, at, marker);
+        });
+        setFocusLogs(prev => {
+          const above = focusAboveId === undefined ? -1 : prev.findIndex(line => line.id === focusAboveId);
+          if (above >= 0) return insertAt(prev, above + 1, marker);
+          const below = focusBelowId === undefined ? -1 : prev.findIndex(line => line.id === focusBelowId);
+          return insertAt(prev, below >= 0 ? below : prev.length, marker);
+        });
+      })
+      .catch((err: unknown) => console.error(err));
+  };
 
   // Click on a focus row: scroll the main terminal to the matching line and highlight it
   const onClickFocusLogs = (id: number) => {
@@ -553,6 +593,7 @@ export default function Home() {
                     onScroll={(event) => handleScroll(event, isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
                     selectedLineId={selectedMainLineId}
                     onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
+                    onInsertMarker={insertMarkerAbove}
                     lineNumbers={mainLineNumbers}
                     timestamps={timestamps}
                     arrival={arrival}

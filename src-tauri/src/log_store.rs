@@ -8,6 +8,12 @@
 //! user is looking at:
 //! - `serial-data` / `*-append` events append   -> [`LogStore::append`]
 //! - `serial-datas` / `serial-datas-focus` replace the list -> [`LogStore::replace`]
+//! - a marker inserted in the middle of the log            -> [`LogStore::insert_before`]
+//!
+//! Records are kept in display order. Ids are given in the order lines are added, so they
+//! increase along the log, except for a marker inserted in the middle: it gets a new id, larger
+//! than the lines around it. Tools following the log by id (`after_id`) walk records in id
+//! order, so such a marker is reported once, as a new line.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -71,6 +77,14 @@ struct Inner {
 }
 
 impl Inner {
+    /// Records with `id > after_id`, in id order (the order they were added).
+    fn newer_than(&self, after_id: u64) -> Vec<&LogRecord> {
+        let mut records: Vec<&LogRecord> = self.records.iter().filter(|r| r.id > after_id).collect();
+        // Already sorted but for inserted markers, so this stable sort is close to linear
+        records.sort_by_key(|r| r.id);
+        records
+    }
+
     /// Drops the oldest records until the buffer fits `capacity`.
     fn enforce_capacity(&mut self) {
         while self.records.len() > self.capacity {
@@ -141,6 +155,20 @@ impl LogStore {
         self.notify.notify_waiters();
     }
 
+    /// Inserts `record` just before the record `before_id`. Does nothing when that record is not
+    /// in the store anymore (evicted or cleared).
+    pub async fn insert_before(&self, before_id: u64, record: LogRecord) {
+        {
+            let mut inner = self.inner.write().await;
+            let Some(position) = inner.records.iter().position(|r| r.id == before_id) else {
+                return;
+            };
+            inner.records.insert(position, record);
+            inner.enforce_capacity();
+        }
+        self.notify.notify_waiters();
+    }
+
     pub async fn clear(&self) {
         let mut inner = self.inner.write().await;
         inner.records.clear();
@@ -168,7 +196,8 @@ impl LogStore {
             total_lines: inner.records.len(),
             focus_lines: inner.records.iter().filter(|r| r.focus).count(),
             oldest_id: inner.records.front().map(|r| r.id),
-            newest_id: inner.records.back().map(|r| r.id),
+            // Not the last record when a marker was inserted in the middle of the log
+            newest_id: inner.records.iter().map(|r| r.id).max(),
             dropped_lines: inner.dropped,
             capacity: inner.capacity,
             source: inner.source.clone(),
@@ -224,13 +253,12 @@ impl LogStore {
         matching.into_iter().skip(skip).cloned().collect()
     }
 
-    /// Records strictly after `after_id`, capped at `max_lines`.
+    /// Records strictly after `after_id`, in id order, capped at `max_lines`.
     pub async fn after(&self, after_id: u64, max_lines: usize) -> Vec<LogRecord> {
         let inner = self.inner.read().await;
         inner
-            .records
-            .iter()
-            .filter(|r| r.id > after_id)
+            .newer_than(after_id)
+            .into_iter()
             .take(max_lines)
             .cloned()
             .collect()
@@ -286,7 +314,7 @@ impl LogStore {
             let mut occurrences_seen = 0usize;
             let mut last_id = after_id;
             let mut found: Option<LogRecord> = None;
-            for record in inner.records.iter().filter(|r| r.id > after_id) {
+            for record in inner.newer_than(after_id) {
                 last_id = record.id;
                 if matcher(&record.text) {
                     occurrences_seen += 1;
@@ -750,6 +778,38 @@ mod tests {
         writer.await.unwrap();
 
         assert!(got.matched);
+        assert_eq!(got.line.unwrap().id, 3);
+    }
+
+    #[tokio::test]
+    async fn insert_before_places_the_record_above_its_line() {
+        let store = store_with(&[(1, "a"), (2, "b"), (3, "c")]).await;
+
+        store.insert_before(2, record(4, "mark")).await;
+        // Unknown line (evicted or cleared): nothing is inserted
+        store.insert_before(42, record(5, "lost")).await;
+
+        let (records, _) = store.page(0, 10).await;
+        assert_eq!(records.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 4, 2, 3]);
+        assert_eq!(store.stats().await.newest_id, Some(4), "the newest id, not the last line");
+    }
+
+    #[tokio::test]
+    async fn following_by_id_reports_an_inserted_marker_once() {
+        let store = store_with(&[(1, "a"), (2, "b"), (3, "c")]).await;
+        store.insert_before(2, record(4, "mark")).await;
+        store.append(vec![record(5, "d")]).await;
+
+        let first = store.after(2, 2).await;
+        assert_eq!(first.iter().map(|r| r.id).collect::<Vec<_>>(), vec![3, 4]);
+        let second = store.after(4, 2).await;
+        assert_eq!(second.iter().map(|r| r.id).collect::<Vec<_>>(), vec![5]);
+
+        // Line 3 matches but is displayed after the marker: walking by id still sees it first
+        let matcher = build_matcher("c|mark", true, true).unwrap();
+        let got = store
+            .wait_for_pattern(2, matcher.as_ref(), 0, Duration::from_millis(10))
+            .await;
         assert_eq!(got.line.unwrap().id, 3);
     }
 

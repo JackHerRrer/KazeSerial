@@ -29,7 +29,7 @@ Kaze Serial is a modern, high-performance serial terminal application built with
   - **Split View**: A secondary "Focus" terminal to isolate matched logs or view different parts of the stream.
   - **Sentence removal**: Remove garbage by sentence matching 
   - **Search** (Ctrl+F): find text or a regex in the main log
-  - **Markers** (Ctrl+M): insert numbered `MARK` lines to delimit parts of the logs
+  - **Markers** (Ctrl+M): insert numbered `MARK` lines to delimit parts of the logs, at the end or above any line (button shown when hovering it)
 - **Export/import**:
   - **export**: 
     - Export raw log (without highligh and sentence removal applied) to a file

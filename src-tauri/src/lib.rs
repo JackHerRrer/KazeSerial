@@ -180,6 +180,13 @@ impl AppState {
     fn reset_markers(&self) {
         self.marker_counter.store(0, Ordering::SeqCst);
     }
+
+    /// Next numbered marker line (`----- MARK 1 -----`), with a new line id.
+    fn next_marker(&self, timestamp: Option<u64>) -> Payload {
+        let number = self.marker_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        let id = self.message_id_counter.fetch_add(1, Ordering::SeqCst);
+        marker_payload(format!("----- MARK {} -----", number), id, timestamp)
+    }
 }
 
 /// Derives a store record from an emitted payload. `rawline` carries the untouched
@@ -598,11 +605,24 @@ async fn add_logs_line(
 /// reproduction attempt.
 #[tauri::command]
 async fn add_marker(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let number = state.marker_counter.fetch_add(1, Ordering::SeqCst) + 1;
-    let id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
-    let payload = marker_payload(format!("----- MARK {} -----", number), id, Some(now_ms()));
+    let payload = state.next_marker(Some(now_ms()));
     publish_one(&app, payload).await;
     Ok(())
+}
+
+/// Inserts a numbered marker line just above the line `before_id`, e.g. to mark where a problem
+/// starts in an existing log. The marker is recorded in the log store and returned, not emitted:
+/// the webview inserts it itself, in the main and focus lists. `timestamp` is the one of the line
+/// above the marker, so the marker does not change which timestamps are shown.
+#[tauri::command]
+async fn insert_marker(
+    before_id: u64,
+    timestamp: Option<u64>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Payload, String> {
+    let payload = state.next_marker(timestamp);
+    state.log_store.insert_before(before_id, record_of(&payload)).await;
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -1249,6 +1269,7 @@ pub fn run() {
             append_logs_line,
             clear_logs,
             add_marker,
+            insert_marker,
             open_file,
             watch_file,
             stop_file_watch,

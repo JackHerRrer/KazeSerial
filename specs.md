@@ -89,7 +89,7 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 Enabled by the **Show line numbers** setting of the [Config tab](#config-tab). Like in a code editor, a gutter on the left of each row shows its line number.
 
 - **Main terminal**: the position of the line in the main log, starting at 1. Lines hidden by a `remove` + `whole_line` rule are counted, so the numbering skips them and a number always designates the same line whatever the rules. It restarts at 1 when the log is cleared or replaced by an opened file; Refresh keeps the same numbers.
-- **Focus terminal**: the number of the same line in the main log, found by id (binary search, since ids increase along the log, with a linear search as fallback). Empty when that line is no longer in the main log.
+- **Focus terminal**: the number of the same line in the main log, found by id (binary search, since ids increase along the log, with a linear search as fallback). Markers are skipped by the binary search, since a marker inserted above a line has a larger id than the lines around it. Empty when that line is no longer in the main log.
 - **Rendering**: the number is CSS generated content (`::before { content: attr(data-line-number) }`), so it is neither selectable nor part of copied text, and Save never includes it. The gutter is right-aligned, gray (`#545a62`), as wide as the largest number of the main log plus 2 characters, and `position: sticky` on the left with an opaque background so text scrolled horizontally passes under it. It follows the selected row highlight.
 - **Separate gutter boxes**: the line number and the timestamp are two sibling sticky boxes, never one shared container. WebKit (the Tauri webview on Linux) fills the selection gap before selected text up to the start of its box: with a selectable timestamp in the same box, a multi-line selection painted over the line number. Copied text was not affected.
 - The terminal receives it through an optional `lineNumbers` prop (`{ numberOf(index), digits }`); without it, no gutter is rendered.
@@ -149,6 +149,7 @@ Search in the main terminal, like the find widget of a code editor.
 A marker is a numbered line inserted by the user to delimit a part of the log, e.g. a reproduction attempt.
 
 - **Insertion**: Ctrl+M or the toolbar **Insert marker** button calls `add_marker`, which appends `----- MARK n -----` at the end of the log (`n` starts at 1 and increases with each marker; clearing the logs, with the Clear button, Ctrl+Shift+R or the MCP `clear_logs` tool, starts it again at 1). The line gets a reception timestamp.
+- **Insertion above a line**: hovering a row of the main terminal shows an **Insert a marker above** button (bookmark icon, marker color) at the height of that row. It is a single button over the list, 20px from its right edge so it stays clear of the vertical scrollbar, and horizontal scrolling does not move it. The row is the one at the pointer height, also where a short row does not reach when scrolled horizontally; it is updated when the pointer moves, on scroll and when the lines change. Clicking it calls `insert_marker` and inserts the marker just above that line, without selecting the row. The marker takes the next number, so numbers follow the insertion order, not the log order. It gets the timestamp of the line above it (none above the first line), so it does not change which timestamps are shown. In the focus terminal it goes after the closest focus line above it in the main log, or else before the closest one below it. Its id is new, so larger than the ids of the lines around it, see [log store](#log-store).
 - **Style**: bold violet text (`#c586c0`) on a light tint of it (`rgba(197,134,192,0.12)`), unless the row is selected.
 - **Behavior**: a marker is not processed by the highlight rules (`marker_payload`, text HTML-escaped). It is flagged `matched`, so it also appears in the focus terminal and delimits the focus lines. It is recorded in the log store (visible to MCP clients) and written by Save like any line. Refresh sends the marker flags back (`add_logs_line` `markers`), so markers stay markers. To go back to a marker, search for `MARK`.
 
@@ -437,6 +438,9 @@ Returns `{ running, url, port }`.
 #### `add_marker()`
 Appends a numbered marker line `----- MARK n -----` (`marker_counter`) as a `serial-data` event, with a reception timestamp, see [Markers](#markers).
 
+#### `insert_marker(before_id, timestamp?) -> Payload`
+Creates a numbered marker line with the given timestamp and inserts it in the log store just before the line `before_id` (nothing is recorded when that line is no longer in the store). Emits nothing: the marker is returned and the frontend inserts it in the main and focus lists, see [Markers](#markers).
+
 #### `open_file(path)`
 Reads the file once and replaces the logs with its lines (`serial-datas` / `serial-datas-focus`), without timestamps. The file is decoded as UTF-8 (invalid bytes replaced with `U+FFFD`) and split like a [followed file](#file-follow-tail--f) (`\n` separator, trailing `\r` stripped, empty lines kept); the last line is kept even without a trailing newline. Sets the log store source to `file`. Returns an error if the file cannot be read.
 
@@ -547,13 +551,15 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 |---|---|
 | `serial-data`, `serial-datas-append` | append |
 | `serial-datas` | replace the whole buffer |
+| Insert a marker above a line (`insert_marker` command) | insert before that line |
 | Clear button / Ctrl+Shift+R (`clear_logs` command) | clear |
 | MCP `clear_logs` tool (then `logs-cleared`) | clear |
 
 - Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), and its `focus` / `removed` flags.
 - It is a ring buffer: past the capacity (default **500 000** lines, `KAZESERIAL_LOG_CAPACITY` to override), the oldest lines are evicted and counted as dropped.
 - It tracks the current source: `none`, `serial`, `file` (opened once with `open_file`) or `file_watch` (followed).
-- Appends wake up waiting MCP calls, so `wait_for_logs` and `wait_for_pattern` block instead of polling.
+- Records are in log order. Ids increase along the log, except for a marker inserted above a line, whose new id is larger than the ids around it; `wait_for_logs` and `wait_for_pattern` walk records in id order.
+- Appends and insertions wake up waiting MCP calls, so `wait_for_logs` and `wait_for_pattern` block instead of polling.
 
 ---
 
@@ -580,7 +586,7 @@ Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) 
 | `wait_for_pattern(after_id, pattern, is_regex=false, ignore_case=true, skip_occurrences=0, timeout_ms=15000)` | Blocks until a line with `id > after_id` matches, after skipping `skip_occurrences` matches; returns it with the new `last_id` |
 | `clear_logs` | Clears the store, resets the marker numbering, and emits `logs-cleared` so the window is cleared too |
 
-Line ids are stable within a session and never reused.
+Line ids are stable within a session and never reused. They give the order in which lines were added, which is the log order except for a [marker inserted above a line](#markers): `wait_for_logs` and `wait_for_pattern` walk lines in id order, so such a marker is reported once, as a new line, and `newest_id` is the largest id, not the id of the last line. The other tools return lines in log order.
 
 ---
 
