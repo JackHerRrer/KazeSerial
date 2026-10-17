@@ -1,12 +1,14 @@
 mod log_file;
 mod log_store;
 mod mcp;
+mod serial_splitter;
 mod tail_splitter;
 
 use log_file::{LogFileSettings, LogFiles};
 use log_store::{LogRecord, LogSource, LogStore};
 use regex::Regex;
 use rayon::prelude::*;
+use serial_splitter::SerialSplitter;
 use serialport::{SerialPort, SerialPortType};
 use std::collections::HashSet;
 use std::fs;
@@ -438,7 +440,9 @@ fn colored_spans<'a>(hl: &'a HighlightSettings, text: &str) -> Vec<ColoredSpan<'
     spans
 }
 
-/// Escapes the characters that have a meaning in HTML text and attribute values.
+/// Escapes the characters that have a meaning in HTML text and attribute values. Line breaks
+/// become spaces: a line is shown on a single row of fixed height, which a break would overflow
+/// (the HTML parser turns a lone `\r` into a break too). Spaces keep the text offsets unchanged.
 fn html_escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for c in text.chars() {
@@ -447,6 +451,7 @@ fn html_escape(text: &str) -> String {
             '<' => escaped.push_str("&lt;"),
             '>' => escaped.push_str("&gt;"),
             '"' => escaped.push_str("&quot;"),
+            '\r' | '\n' => escaped.push(' '),
             _ => escaped.push(c),
         }
     }
@@ -841,8 +846,7 @@ async fn open_port(
                 .find(|(name, _)| *name == port_name)
                 .and_then(|(_, identity)| identity);
             tokio::spawn(async move {
-                let mut line_buffer: Vec<u8> = Vec::new();
-                //let regex_eol = regex::Regex::new(r"\r\n|\n\r|\r|\n").unwrap();
+                let mut splitter = SerialSplitter::default();
                 loop {
                     let mut lock = serial.lock().await;
 
@@ -873,22 +877,10 @@ async fn open_port(
                                     ).await;
                                     continue;
                                 }
-                                line_buffer.push(temp[0]);
-                                let len = line_buffer.len();
-                                let found = if len >= 2 {
-                                    (line_buffer[len - 2] == b'\r' && line_buffer[len - 1] == b'\n')
-                                        || (line_buffer[len - 2] == b'\n'
-                                            && line_buffer[len - 1] == b'\r')
-                                } else {
-                                    temp[0] == b'\r' || temp[0] == b'\n'
-                                };
-                                if found {
-                                    //let s = String::from_utf8_lossy(&line_buffer);
-                                    //let mut line = regex_eol.replace_all(&s, "").to_string();
-                                    let line = String::from_utf8_lossy(&line_buffer).to_string();
-                                    let cur_payload = parse_log_line(line.clone(), app_handle.clone()).await;
+                                if let Some(line) = splitter.push(temp[0]) {
+                                    let line = String::from_utf8_lossy(&line).to_string();
+                                    let cur_payload = parse_log_line(line, app_handle.clone()).await;
                                     publish_one(&app_handle, cur_payload).await;
-                                    line_buffer.clear();
                                 }
                             }
                             Ok(_) => {}
@@ -911,7 +903,7 @@ async fn open_port(
                                 // Release the dead port, then wait for the device to come back
                                 *lock = None;
                                 drop(lock);
-                                line_buffer.clear();
+                                splitter = SerialSplitter::default();
                                 emit_system_msg(
                                     &app_handle,
                                     format!("Connection to {} lost, waiting for it to come back", port_name_loop),
@@ -1261,7 +1253,7 @@ async fn get_mcp_status(state: tauri::State<'_, AppState>) -> Result<McpStatus, 
     })
 }
 fn create_config_dir(app: &mut tauri::App) {
-    match fs::create_dir(app.path().app_config_dir().unwrap()) {
+    match fs::create_dir_all(app.path().app_config_dir().unwrap()) {
         Ok(_) => {}
         Err(err) => {
             println!("Unable to create dir  {}", err);
@@ -1630,6 +1622,13 @@ mod process_line_tests {
         assert_eq!(payload.message, "if a &lt;b &amp;&amp; c&gt; d");
         // Refresh, Save and the MCP store read `rawline` when present, `message` otherwise
         assert_eq!(payload.rawline.as_deref(), Some("if a <b && c> d"));
+    }
+
+    #[test]
+    fn line_breaks_in_the_log_are_shown_as_spaces() {
+        let payload = process("a\rb\nc", vec![rule("b", R)]);
+        assert_eq!(payload.message, "a <span style=\"color:R;\">b</span> c");
+        assert_eq!(payload.rawline.as_deref(), Some("a\rb\nc"));
     }
 
     #[test]
