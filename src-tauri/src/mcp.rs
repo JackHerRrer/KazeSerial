@@ -7,7 +7,8 @@
 //! claude mcp add --transport http kazeserial http://127.0.0.1:9339/mcp
 //! ```
 //!
-//! Read-only apart from [`KazeMcp::clear_logs`]. Nothing here can touch the serial port.
+//! Read-only apart from [`KazeMcp::clear_logs`], [`KazeMcp::add_highlight`] and
+//! [`KazeMcp::refresh_logs`]. Nothing here can touch the serial port.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,6 +24,7 @@ use rmcp::transport::streamable_http_server::{
 use rmcp::{ErrorData, ServerHandler, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::log_store::{LogRecord, LogStore, SearchOptions, build_matcher};
@@ -31,6 +33,8 @@ use crate::log_store::{LogRecord, LogStore, SearchOptions, build_matcher};
 const HARD_MAX_LINES: usize = 20_000;
 /// Upper bound on how long `wait_for_logs` may block.
 const MAX_WAIT_MS: u64 = 120_000;
+/// How long a tool waits for the window to carry out what it asked.
+const WINDOW_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -150,6 +154,25 @@ pub struct ClearOutput {
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
+pub struct AddHighlightOutput {
+    /// The rule as it was added to the user's highlight list, after defaults were applied.
+    pub rule: HighlightRule,
+    /// Reminder of what the rule applies to.
+    pub note: String,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct RefreshOutput {
+    pub total_lines: usize,
+    /// Lines matching a "focus" highlight rule after the refresh.
+    pub focus_lines: usize,
+    /// New lowest id, `null` when empty. Every line got a new id.
+    pub oldest_id: Option<u64>,
+    /// New highest id, `null` when empty. Use as the cursor for `wait_for_logs`.
+    pub newest_id: Option<u64>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct WaitOutput {
     pub lines: Vec<LogLine>,
     pub returned: usize,
@@ -194,6 +217,9 @@ fn default_timeout_ms() -> u64 {
 }
 fn default_wait_max() -> usize {
     500
+}
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -294,6 +320,147 @@ pub struct WaitForPatternParams {
     pub timeout_ms: u64,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct AdvancedSelectionParams {
+    /// Capture groups of the regex to color, numbered from 1 left to right — e.g. [1, 3].
+    pub groups: Vec<usize>,
+    /// `#rrggbb` color for these groups. Defaults to the rule's `color`.
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct AddHighlightParams {
+    /// Text or regex the rule looks for.
+    pub pattern: String,
+    /// Treat `pattern` as a Rust regex instead of a literal text. Default false.
+    #[serde(default)]
+    pub is_regex: bool,
+    /// Case-sensitive matching. Default true.
+    #[serde(default = "default_true")]
+    pub case_sensitive: bool,
+    /// `#rrggbb` highlight color. Default `#cc7f12` (orange).
+    #[serde(default)]
+    pub color: Option<String>,
+    /// List matching lines in the focus panel (and in `get_focus_logs`). Default true.
+    /// Ignored when `remove` is set.
+    #[serde(default = "default_true")]
+    pub focus: bool,
+    /// Hide the matched text (or the whole line with `whole_line`) instead of coloring it.
+    /// Default false.
+    #[serde(default)]
+    pub remove: bool,
+    /// Color or remove the entire line instead of just the matched text. Default false.
+    /// Cannot be combined with `advanced_selections`.
+    #[serde(default)]
+    pub whole_line: bool,
+    /// Advanced mode: color individual capture groups instead of the whole match, each
+    /// selection with its own color. Requires `is_regex`.
+    #[serde(default)]
+    pub advanced_selections: Vec<AdvancedSelectionParams>,
+}
+
+/// One highlight rule, in the shape the Highlight tab stores it.
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct HighlightRule {
+    pub text: String,
+    pub color: String,
+    pub is_regex: bool,
+    pub case_sensitive: bool,
+    pub whole_line: bool,
+    pub advanced: bool,
+    pub advanced_selections: Vec<HighlightSelection>,
+    pub focus: bool,
+    pub remove: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct HighlightSelection {
+    pub color: String,
+    /// Comma-separated capture group numbers, e.g. `1,3`.
+    pub selector: String,
+}
+
+const DEFAULT_HIGHLIGHT_COLOR: &str = "#cc7f12";
+
+fn is_hex_color(color: &str) -> bool {
+    color.len() == 7
+        && color.starts_with('#')
+        && color[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn parse_color(color: Option<String>, default: &str) -> Result<String, String> {
+    match color {
+        None => Ok(default.to_string()),
+        Some(color) if is_hex_color(&color) => Ok(color.to_lowercase()),
+        Some(color) => Err(format!("invalid color {:?}: expected #rrggbb", color)),
+    }
+}
+
+/// Validates an `add_highlight` request and turns it into the rule the Highlight tab would
+/// hold if the user had filled the row with the same options.
+fn build_highlight_rule(params: AddHighlightParams) -> Result<HighlightRule, String> {
+    if params.pattern.is_empty() {
+        return Err("pattern must not be empty".to_string());
+    }
+    let color = parse_color(params.color, DEFAULT_HIGHLIGHT_COLOR)?;
+
+    let mut capture_groups = 0;
+    if params.is_regex {
+        let regex = regex::RegexBuilder::new(&params.pattern)
+            .case_insensitive(!params.case_sensitive)
+            .build()
+            .map_err(|e| format!("invalid regex: {}", e))?;
+        capture_groups = regex.captures_len() - 1;
+    }
+
+    let advanced = !params.advanced_selections.is_empty();
+    if advanced && !params.is_regex {
+        return Err("advanced_selections requires is_regex".to_string());
+    }
+    if advanced && params.whole_line {
+        return Err("whole_line cannot be combined with advanced_selections".to_string());
+    }
+
+    let advanced_selections = params
+        .advanced_selections
+        .into_iter()
+        .map(|selection| {
+            if selection.groups.is_empty() {
+                return Err("each advanced selection needs at least one group".to_string());
+            }
+            if let Some(group) = selection.groups.iter().find(|&&g| g < 1 || g > capture_groups) {
+                return Err(format!(
+                    "capture group {} does not exist: the regex has {} group(s)",
+                    group, capture_groups
+                ));
+            }
+            Ok(HighlightSelection {
+                color: parse_color(selection.color, &color)?,
+                selector: selection
+                    .groups
+                    .iter()
+                    .map(|g| g.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    Ok(HighlightRule {
+        text: params.pattern,
+        color,
+        is_regex: params.is_regex,
+        case_sensitive: params.case_sensitive,
+        whole_line: params.whole_line,
+        advanced,
+        advanced_selections,
+        // Same rule as the Highlight tab: a "remove" rule never feeds the focus panel.
+        focus: params.focus && !params.remove,
+        remove: params.remove,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -323,6 +490,26 @@ impl KazeMcp {
             app,
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Emits `event` to the window and waits until it reports back through `done`.
+    async fn ask_window<P: Serialize + Clone>(
+        &self,
+        event: &str,
+        payload: P,
+        done: &Notify,
+    ) -> Result<(), ErrorData> {
+        // Registered before emitting, so a window that answers right away is not missed.
+        let notified = done.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        self.app
+            .emit(event, payload)
+            .map_err(|e| ErrorData::internal_error(format!("failed to reach the window: {}", e), None))?;
+        tokio::time::timeout(WINDOW_TIMEOUT, notified)
+            .await
+            .map_err(|_| ErrorData::internal_error("the window did not answer in time", None))
     }
 
     #[tool(
@@ -536,6 +723,59 @@ impl KazeMcp {
             cleared_lines: stats.total_lines,
         })
     }
+
+    #[tool(
+        name = "add_highlight",
+        description = "Add a highlight rule to the user's Highlight tab, exactly as if they had \
+                       filled a new row: a text or regex pattern plus its options (color, case \
+                       sensitivity, focus, remove, whole line, and per-capture-group colors in \
+                       advanced mode). Use it to make something you found stand out in the \
+                       user's window, or to flag lines as focus so get_focus_logs returns them. \
+                       The rule is saved with the user's other rules and applies to lines \
+                       received from now on; call refresh_logs to apply it to the lines already \
+                       shown. Tell the user what you added — they can edit or delete it in the \
+                       Highlight tab."
+    )]
+    async fn add_highlight(
+        &self,
+        Parameters(params): Parameters<AddHighlightParams>,
+    ) -> Result<Json<AddHighlightOutput>, ErrorData> {
+        let rule = build_highlight_rule(params).map_err(|e| ErrorData::invalid_params(e, None))?;
+        // The Highlight tab owns the rule list: it appends the rule, saves it and sends the
+        // updated list back to the backend, as for a rule the user adds by hand.
+        let state = self.app.state::<crate::AppState>();
+        self.ask_window("mcp-add-highlight", &rule, &state.highlights_updated)
+            .await?;
+        Ok(Json(AddHighlightOutput {
+            rule,
+            note: "Applies to lines received from now on. Call refresh_logs to re-color the \
+                   lines already shown."
+                .to_string(),
+        }))
+    }
+
+    #[tool(
+        name = "refresh_logs",
+        description = "Re-apply the current highlight rules to every line shown, like the \
+                       user's Refresh button — e.g. right after add_highlight, so the new rule \
+                       also colors and flags as focus the lines already captured. Returns once \
+                       the window is updated. Every line gets a new id: previous ids and \
+                       cursors are no longer valid, use the ids returned here."
+    )]
+    async fn refresh_logs(&self) -> Result<Json<RefreshOutput>, ErrorData> {
+        // Only the window knows the reception time and marker flag of each line, so it runs
+        // the Refresh and sends the lines back to be reprocessed.
+        let state = self.app.state::<crate::AppState>();
+        self.ask_window("mcp-refresh-logs", (), &state.logs_replaced)
+            .await?;
+        let stats = self.store.stats().await;
+        Ok(Json(RefreshOutput {
+            total_lines: stats.total_lines,
+            focus_lines: stats.focus_lines,
+            oldest_id: stats.oldest_id,
+            newest_id: stats.newest_id,
+        }))
+    }
 }
 
 // `router = self.tool_router` reuses the router built once per session; the macro's
@@ -570,7 +810,10 @@ impl ServerHandler for KazeMcp {
                  newest_id as after_id and wait_for_pattern covers both cases (already present \
                  among the newer lines, or arriving later)\n\
                  - get_all_logs only when you truly need everything; it paginates and a capture \
-                 can be tens of thousands of lines\n\n\
+                 can be tens of thousands of lines\n\
+                 - add_highlight to add a highlight rule to the user's window, e.g. to make what \
+                 you found stand out or to flag it as focus, then refresh_logs to apply it to the \
+                 lines already shown (this gives every line a new id)\n\n\
                  Line text is always raw, with no highlight markup. Ids are stable within a \
                  session; the buffer is a ring, so old lines can be evicted (dropped_lines in \
                  get_status says how many).",
@@ -655,4 +898,108 @@ pub async fn start(
     });
 
     Ok(McpServerHandle { addr, cancel })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(pattern: &str) -> AddHighlightParams {
+        AddHighlightParams {
+            pattern: pattern.to_string(),
+            is_regex: false,
+            case_sensitive: true,
+            color: None,
+            focus: true,
+            remove: false,
+            whole_line: false,
+            advanced_selections: Vec::new(),
+        }
+    }
+
+    fn selection(groups: &[usize], color: Option<&str>) -> AdvancedSelectionParams {
+        AdvancedSelectionParams {
+            groups: groups.to_vec(),
+            color: color.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn defaults_match_a_new_row_of_the_highlight_tab() {
+        let rule = build_highlight_rule(params("ERROR")).unwrap();
+        assert_eq!(
+            rule,
+            HighlightRule {
+                text: "ERROR".to_string(),
+                color: DEFAULT_HIGHLIGHT_COLOR.to_string(),
+                is_regex: false,
+                case_sensitive: true,
+                whole_line: false,
+                advanced: false,
+                advanced_selections: Vec::new(),
+                focus: true,
+                remove: false,
+            }
+        );
+    }
+
+    #[test]
+    fn remove_rules_are_never_focus() {
+        let rule = build_highlight_rule(AddHighlightParams { remove: true, ..params("x") }).unwrap();
+        assert!(rule.remove && !rule.focus);
+    }
+
+    #[test]
+    fn colors_must_be_hex() {
+        let ok = build_highlight_rule(AddHighlightParams { color: Some("#A0B1C2".into()), ..params("x") });
+        assert_eq!(ok.unwrap().color, "#a0b1c2");
+        for bad in ["red", "#fff", "#gg0000", "a0b1c2c"] {
+            assert!(build_highlight_rule(AddHighlightParams { color: Some(bad.into()), ..params("x") }).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_empty_pattern_and_invalid_regex() {
+        assert!(build_highlight_rule(params("")).is_err());
+        assert!(build_highlight_rule(AddHighlightParams { is_regex: true, ..params("(") }).is_err());
+        // Not a regex: parentheses are plain text.
+        assert!(build_highlight_rule(params("(")).is_ok());
+    }
+
+    #[test]
+    fn advanced_selections_become_group_selectors() {
+        let rule = build_highlight_rule(AddHighlightParams {
+            is_regex: true,
+            color: Some("#112233".into()),
+            advanced_selections: vec![selection(&[1, 3], None), selection(&[2], Some("#445566"))],
+            ..params(r"(\w+)=(\d+) (\w+)")
+        })
+        .unwrap();
+        assert!(rule.advanced && !rule.whole_line);
+        assert_eq!(
+            rule.advanced_selections,
+            vec![
+                HighlightSelection { color: "#112233".into(), selector: "1,3".into() },
+                HighlightSelection { color: "#445566".into(), selector: "2".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn advanced_selections_are_validated() {
+        let advanced = |pattern: &str, is_regex: bool, whole_line: bool, groups: &[usize]| {
+            build_highlight_rule(AddHighlightParams {
+                is_regex,
+                whole_line,
+                advanced_selections: vec![selection(groups, None)],
+                ..params(pattern)
+            })
+        };
+        assert!(advanced("(a)", false, false, &[1]).is_err(), "requires a regex");
+        assert!(advanced("(a)", true, true, &[1]).is_err(), "exclusive with whole_line");
+        assert!(advanced("(a)", true, false, &[]).is_err(), "needs a group");
+        assert!(advanced("(a)", true, false, &[0]).is_err(), "groups start at 1");
+        assert!(advanced("(a)", true, false, &[2]).is_err(), "group out of range");
+        assert!(advanced("(a)", true, false, &[1]).is_ok());
+    }
 }

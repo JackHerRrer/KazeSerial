@@ -291,6 +291,12 @@ export default function Home() {
       .catch((err: unknown) => console.error(err));
   };
 
+  // Latest Refresh, called by the MCP listener without re-subscribing on every change
+  const refreshAllRef = useRef(onClickRefreshAll);
+  useEffect(() => {
+    refreshAllRef.current = onClickRefreshAll;
+  });
+
   const addSingleLog = (log: SerialMessage) => {
     setLogs(prev => [...prev, log]);
   };
@@ -336,6 +342,8 @@ export default function Home() {
       clearLogs();
       clearFocusLogs();
     });
+    // Emitted when an MCP client calls refresh_logs: same as clicking Refresh
+    const unlisten_refresh_logs = listen('mcp-refresh-logs', () => refreshAllRef.current());
 
     return () => {
       unlisten_serial_data.then(f => f());
@@ -344,6 +352,7 @@ export default function Home() {
       unlisten_serial_datas_append.then(f => f());
       unlisten_serial_datas_focus_append.then(f => f());
       unlisten_logs_cleared.then(f => f());
+      unlisten_refresh_logs.then(f => f());
     };
   }, []);
 

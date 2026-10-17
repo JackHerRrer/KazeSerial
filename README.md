@@ -134,7 +134,9 @@ KAZESERIAL_MCP_PORT=9339 kazeserial
 | `get_all_logs` | The complete buffer, paginated. |
 | `wait_for_logs` | Blocks until lines newer than a given id arrive, so the agent can follow a live capture without polling. |
 | `wait_for_pattern` | Blocks until a line matching a substring or regex arrives, instead of sleeping a fixed duration. |
-| `clear_logs` | Clears the buffer in both the agent's view and your window. The only tool that writes anything. |
+| `clear_logs` | Clears the buffer in both the agent's view and your window. |
+| `add_highlight` | Adds a highlight rule, with the same options as the Highlight tab. |
+| `refresh_logs` | Same as the **Refresh** button. |
 
 Line text is always the **raw** line, with no highlight markup. Nothing in this interface can write
 to the serial port.

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import IconButton from '@mui/material/IconButton';
@@ -19,6 +19,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import ColorPickerButton from './ColorPickerButton';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import { writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -293,6 +294,29 @@ const HighLighSettings: React.FC = () => {
                 setHighlights(persisted.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
             })
             .catch(e => console.error('Failed to load highlights:', e));
+    }, [setHighlights]);
+
+    // Latest rules, read by the MCP listener without re-subscribing on every change
+    const highlightsRef = useRef(highlights);
+    useEffect(() => {
+        highlightsRef.current = highlights;
+    }, [highlights]);
+
+    // Rule added by an MCP client (add_highlight): appended as if the user had filled a new row
+    useEffect(() => {
+        const unlisten = listen<PersistedHighlightConfig>('mcp-add-highlight', (e) => {
+            const rule = parsePersistedHighlight(
+                { ...e.payload, id: createDefaultHighlight().id },
+                0,
+                normalizeSelectMode,
+                getSelectModeFromPersisted,
+            );
+            // Updated right away so rules added in quick succession are all kept
+            const next = [...(highlightsRef.current ?? []), rule];
+            highlightsRef.current = next;
+            setHighlights(next);
+        });
+        return () => { unlisten.then(f => f()); };
     }, [setHighlights]);
 
     const handleAddHighlight = async () => {

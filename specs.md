@@ -361,6 +361,8 @@ On every change, highlights are:
 
 On mount, highlights are loaded from that file.
 
+A rule added by the MCP `add_highlight` tool (`mcp-add-highlight` event) is appended as a new row and goes through the same steps.
+
 ### Rule data model (TypeScript)
 
 ```typescript
@@ -404,6 +406,8 @@ struct AppState {
     serial_connected: Arc<AtomicBool>, // lock-free mirror of serial_connection.is_some()
     serial_session: Arc<AtomicU64>,    // incremented by every open / close, stops stale reconnection loops
     mcp_server: Arc<Mutex<Option<McpServerHandle>>>,
+    highlights_updated: Arc<Notify>,   // signaled by set_highlights, awaited by MCP add_highlight
+    logs_replaced: Arc<Notify>,        // signaled by add_logs_line, awaited by MCP refresh_logs
 }
 ```
 
@@ -629,7 +633,7 @@ Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) 
 
 - **Transport**: Streamable HTTP at `http://127.0.0.1:{port}/mcp`, served inside the Tauri process. Bound to loopback only; the `Host` header is checked against loopback names against DNS rebinding.
 - **Lifecycle**: off by default, and never started automatically from the settings. Started and stopped from the [Config tab](#config-tab) (**Enable MCP server**, on the saved **Port**), or at launch when `KAZESERIAL_MCP_PORT` is set (`0` picks a free port, printed in the log).
-- **Scope**: read-only apart from `clear_logs`. Nothing can touch the serial port or the files.
+- **Scope**: read-only apart from `clear_logs`, `add_highlight` and `refresh_logs`. Nothing can touch the serial port or the files.
 - **Limits**: a call returns at most **20 000** lines; a wait blocks at most **120 s**.
 
 ### Tools
@@ -645,6 +649,8 @@ Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) 
 | `wait_for_logs(after_id, timeout_ms=15000, max_lines=500)` | Blocks until lines with `id > after_id` arrive; returns them with the new `last_id` |
 | `wait_for_pattern(after_id, pattern, is_regex=false, ignore_case=true, skip_occurrences=0, timeout_ms=15000)` | Blocks until a line with `id > after_id` matches, after skipping `skip_occurrences` matches; returns it with the new `last_id` |
 | `clear_logs` | Clears the store, resets the marker numbering, and emits `logs-cleared` so the window is cleared too |
+| `add_highlight(pattern, is_regex=false, case_sensitive=true, color="#cc7f12", focus=true, remove=false, whole_line=false, advanced_selections=[])` | Emits `mcp-add-highlight` and waits (10 s max) for the window's `set_highlights`; returns the rule. `advanced_selections` is a list of `{ groups: [1, 3], color? }`. Rejected: invalid regex or color, advanced without regex or with `whole_line`, unknown group |
+| `refresh_logs` | Emits `mcp-refresh-logs` and waits (10 s max) for the window's `add_logs_line`; returns the new line counts and ids (every line gets a new id) |
 
 Line ids are stable within a session and never reused. They give the order in which lines were added, which is the log order except for a [marker inserted above a line](#markers): `wait_for_logs` and `wait_for_pattern` walk lines in id order, so such a marker is reported once, as a new line, and `newest_id` is the largest id, not the id of the last line. The other tools return lines in log order.
 
@@ -661,6 +667,8 @@ Line ids are stable within a session and never reused. They give the order in wh
 | `serial-datas-focus-append` | `SerialMessage[]` | Batch of new focus-matched lines to append |
 | `file-watch-stopped` | *(empty)* | Emitted when the file follow loop exits (user stop or missing file). The frontend resets the Follow button. |
 | `logs-cleared` | *(empty)* | Emitted when an MCP client calls `clear_logs`. The frontend clears the main and focus logs so the window stays in sync. |
+| `mcp-add-highlight` | rule (`HighlightRule`, persisted rule shape) | Emitted by the MCP `add_highlight` tool. The Highlight tab appends the rule. |
+| `mcp-refresh-logs` | *(empty)* | Emitted by the MCP `refresh_logs` tool. The frontend runs Refresh. |
 | `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged) without auto-reconnect. The frontend listens to this event to reset the Connect button to its disconnected state. |
 | `serial-reconnecting` | *(empty)* | Emitted when the port is lost with auto-reconnect: the backend waits for it to come back. The Serial tab shows a waiting caption. |
 | `serial-reconnected` | `string` (port name) | Emitted when auto-reconnect reopened the port, possibly under another name. The Serial tab hides the waiting caption, selects that port and lists the ports again. |

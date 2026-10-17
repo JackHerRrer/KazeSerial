@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tail_splitter::{decode_utf8, TailSplitter};
 use tauri::{Emitter, Manager};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -177,6 +177,12 @@ struct AppState {
     /// reconnect stops when its session has been replaced or closed.
     serial_session: Arc<AtomicU64>,
     mcp_server: Arc<Mutex<Option<mcp::McpServerHandle>>>,
+    /// Signaled when the window sends its highlight rules, so an MCP tool that asked the
+    /// window to change them knows when they apply.
+    highlights_updated: Arc<Notify>,
+    /// Signaled when the window replaces the whole log (Refresh, file open), so an MCP tool
+    /// that asked for a Refresh knows when it is done.
+    logs_replaced: Arc<Notify>,
 }
 
 impl AppState {
@@ -612,6 +618,7 @@ async fn add_logs_line(
         })
         .collect();
     publish_replace(&emitter, results).await;
+    emitter.state::<AppState>().logs_replaced.notify_waiters();
     Ok(())
 }
 
@@ -740,8 +747,8 @@ async fn set_highlights(
         .into_iter()
         .filter_map(build_highlight_settings)
         .collect();
-    let mut lock = state.highlights.lock().await;
-    *lock = hilights_settings;
+    *state.highlights.lock().await = hilights_settings;
+    state.highlights_updated.notify_waiters();
     Ok(())
 }
 
@@ -1279,6 +1286,8 @@ pub fn run() {
         serial_connected: Arc::new(AtomicBool::new(false)),
         serial_session: Arc::new(AtomicU64::new(0)),
         mcp_server: Arc::new(Mutex::new(None)),
+        highlights_updated: Arc::new(Notify::new()),
+        logs_replaced: Arc::new(Notify::new()),
     };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
