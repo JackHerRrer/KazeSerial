@@ -18,7 +18,7 @@ Kaze Serial is a modern, high-performance serial terminal application built with
   - Auto-scroll with pause-on-hover/scroll-up capability.
   - Clicking on a row of focus view will scroll the main log view to this element
   - Optional line numbers, as in a code editor.
-  - Optional timestamps (reception time), with a configurable format, optionally shown only after a pause in the logs
+  - Minimap of the log on the right of the main vie
   - Optional highlight of new lines, fading out
 - **Advanced Analysis**:
   - **Highlighting**: Define custom search patterns to highlight specific log messages with custom colors. Patterns can be:
@@ -150,7 +150,7 @@ to the serial port.
 ## Configuration
 
 - **Highlights**: Highlight settings are automatically saved to `highlight_settings.json` in the application configuration directory.
-- **Application settings**: Config tab settings (line numbers, timestamps, new line highlight, serial auto-reconnect, MCP server port) are saved to `app_config.json` in the same directory.
+- **Application settings**: Config tab settings (line numbers, minimap, timestamps, new line highlight, serial auto-reconnect, MCP server port) are saved to `app_config.json` in the same directory.
 - **MCP server**: Off by default, started from the Config tab. `KAZESERIAL_MCP_PORT` starts it at launch; `KAZESERIAL_LOG_CAPACITY` sets the number of lines kept in memory.
 
 ## Background
