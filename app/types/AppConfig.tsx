@@ -3,6 +3,8 @@ import { DEFAULT_TIMESTAMP_FORMAT } from '../utils/timestamp';
 // Application settings edited in the Config tab, persisted to AppConfig/app_config.json
 export type AppConfig = {
   showLineNumbers: boolean;
+  // Overview of the log on the right side of the main terminal, as in VS Code
+  showMinimap: boolean;
   showTimestamps: boolean;
   // Timestamps are part of the line text: selectable, copied and saved
   timestampsInText: boolean;
@@ -30,6 +32,7 @@ export type AppConfig = {
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   showLineNumbers: false,
+  showMinimap: true,
   showTimestamps: true,
   timestampsInText: false,
   timestampsAfterInactivityOnly: true,

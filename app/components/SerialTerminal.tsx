@@ -1,17 +1,20 @@
 'use client';
 
-import React, { useLayoutEffect, useRef, useState, type Ref,  type UIEventHandler } from 'react';
+import React, { useImperativeHandle, useLayoutEffect, useRef, useState, type Ref,  type UIEventHandler } from 'react';
 import { List, type ListImperativeAPI } from 'react-window';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
 import RowComponent, { MARKER_COLOR } from './SerialTerminalLine';
+import LogMinimap, { MINIMAP_WIDTH, scrollByWheel, type LogMinimapHandle } from './LogMinimap';
 import { SerialMessage } from '../types/SerialMessage';
 import { type SearchMatch } from '../utils/search';
 
 // Padding of the terminal box, in px
 const TERMINAL_PADDING = 8;
+// Height of a row, in px
+const ROW_HEIGHT = 20;
 // Distance between the insert marker button and the right edge of the list, in px, so the
 // button stays clear of the vertical scrollbar
 const INSERT_MARKER_RIGHT_GAP = 20;
@@ -59,6 +62,7 @@ interface SerialTerminalProps {
   timestamps?: Timestamps;
   arrival?: Arrival;
   search?: RowSearch;
+  minimap?: boolean;
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
@@ -74,6 +78,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   timestamps,
   arrival,
   search,
+  minimap = false,
 }) => {
   const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
 
@@ -84,14 +89,26 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [hoveredRow, setHoveredRow] = useState<{ id: number; top: number } | null>(null);
 
+  // The list is also scrolled by the minimap, so its API is kept here and forwarded to `listRef`
+  const listApiRef = useRef<ListImperativeAPI | null>(null);
+  const minimapRef = useRef<LogMinimapHandle>(null);
+  useImperativeHandle(listRef, () => ({
+    get element() {
+      return listApiRef.current?.element ?? null;
+    },
+    scrollToRow: (params) => listApiRef.current?.scrollToRow(params),
+  }), []);
+
   // Finds the row at the pointer height and its top relative to the box. Only the height counts:
   // scrolled horizontally, short rows no longer reach the pointer. Called when the pointer moves,
   // and when rows move under it.
   const updateHoveredRow = () => {
     const box = boxRef.current;
     const pointer = pointerRef.current;
+    const listRect = listApiRef.current?.element?.getBoundingClientRect();
     let next: { id: number; top: number } | null = null;
-    if (box && pointer) {
+    // Not over the minimap, on the right of the list
+    if (box && pointer && (!listRect || pointer.x < listRect.right)) {
       // Only the rendered rows, so a few dozen
       const row = Array.from(box.querySelectorAll<HTMLElement>('.serial-terminal-row')).find(element => {
         const rect = element.getBoundingClientRect();
@@ -165,25 +182,43 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
         borderRadius: 1,
         overflow: 'hidden',
         border: '1px solid #333',
+        display: 'flex',
       }}
     >
         <List
           id='SerialLinesList'
-          style={{ height, width, paddingBottom:'20px'}}
+          // The minimap shows the scroll position, so the list has no vertical scrollbar then: it
+          // does not scroll vertically by itself, and the wheel scrolls it. CSS cannot hide only the
+          // vertical scrollbar in every webview: `scrollbar-width: none` also hides the horizontal
+          // one, `::-webkit-scrollbar` is ignored by WebView2 since `scrollbar-width` is set, and
+          // overlay scrollbars (WebKitGTK) take no width to clip.
+          style={{ height, flex: 1, minWidth: 0, paddingBottom:'20px', overflowY: minimap ? 'hidden' : 'auto', overflowX: 'auto' }}
           rowCount={serial_messages.length}
           rowHeight={(index) => {
             const line = serial_messages[index];
-            return line?.removed_line ? 0 : 20;
+            return line?.removed_line ? 0 : ROW_HEIGHT;
           }}
           rowComponent={RowComponent}
           rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, hoveredLineId: hoveredRow?.id, lineNumbers, timestamps, arrival, search }}
           overscanCount={10}
-          listRef={listRef}
+          listRef={listApiRef}
           onScroll={(event) => {
             onScroll(event);
             updateHoveredRow();
+            minimapRef.current?.redraw();
           }}
+          onWheel={minimap ? (event) => scrollByWheel(event.currentTarget, event, ROW_HEIGHT) : undefined}
         />
+        {minimap && (
+          <LogMinimap
+            ref={minimapRef}
+            lines={serial_messages}
+            listApiRef={listApiRef}
+            rowHeight={ROW_HEIGHT}
+            selectedLineId={selectedLineId}
+            search={search}
+          />
+        )}
         {onInsertMarker && hoveredRow && (
           <Tooltip title="Insert a marker above" placement="left" arrow>
             <IconButton
@@ -193,7 +228,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
               sx={{
                 position: 'absolute',
                 top: hoveredRow.top,
-                right: TERMINAL_PADDING + INSERT_MARKER_RIGHT_GAP,
+                right: TERMINAL_PADDING + INSERT_MARKER_RIGHT_GAP + (minimap ? MINIMAP_WIDTH : 0),
                 zIndex: 1,
                 width: 20,
                 height: 20,

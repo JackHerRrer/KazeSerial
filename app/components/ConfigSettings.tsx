@@ -102,6 +102,16 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
         }
       />
       <FormControlLabel
+        label="Show minimap"
+        control={
+          <Checkbox
+            size="small"
+            checked={config.showMinimap}
+            onChange={(e) => onConfigChange({ showMinimap: e.target.checked })}
+          />
+        }
+      />
+      <FormControlLabel
         label="Show timestamps"
         control={
           <Checkbox

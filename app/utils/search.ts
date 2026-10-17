@@ -23,6 +23,13 @@ export const buildSearchRegex = ({ query, caseSensitive, regex }: SearchOptions)
   }
 };
 
+/** Reverts the escaping of the backend, which escapes `&`, `<`, `>` and `"` */
+export const unescapeHtml = (html: string): string => html
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"')
+  .replace(/&amp;/g, '&');
+
 const displayTextCache = new WeakMap<SerialMessage, string>();
 
 /**
@@ -32,12 +39,7 @@ const displayTextCache = new WeakMap<SerialMessage, string>();
 export const displayText = (line: SerialMessage): string => {
   let text = displayTextCache.get(line);
   if (text === undefined) {
-    text = line.message
-      .replace(/<[^>]*>/g, '')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&amp;/g, '&');
+    text = unescapeHtml(line.message.replace(/<[^>]*>/g, ''));
     displayTextCache.set(line, text);
   }
   return text;

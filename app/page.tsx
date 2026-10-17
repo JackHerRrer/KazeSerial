@@ -29,6 +29,7 @@ import ControlPanel from './components/ControlPanel';
 import SearchBar from './components/SearchBar';
 import { useLogSearch } from './hooks/useLogSearch';
 import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
+import { MINIMAP_WIDTH } from './components/LogMinimap';
 import { formatTimestamp, isTimestampShown, timestampColumnText, timestampWidth } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
 import { SerialMessage } from './types/SerialMessage';
@@ -375,6 +376,10 @@ export default function Home() {
     });
   };
 
+  // Distance between the buttons over the main terminal and its right edge, so they stay clear of
+  // the scrollbar and the minimap
+  const mainOverlayRight = 28 + (config.showMinimap ? MINIMAP_WIDTH : 0);
+
   const handleScroll = (
     event: SyntheticEvent<HTMLDivElement>,
     isAutoScrollEnabled: boolean,
@@ -444,7 +449,7 @@ export default function Home() {
                     sx={{
                       position: 'absolute',
                       top: 10,
-                      right: 28,
+                      right: mainOverlayRight,
                       zIndex: 2,
                       display: 'flex',
                       gap: 1,
@@ -602,7 +607,7 @@ export default function Home() {
                     </Menu>
                   </Box>
                   {search.isOpen && (
-                    <Box sx={{ position: 'absolute', top: 54, right: 28, zIndex: 2 }}>
+                    <Box sx={{ position: 'absolute', top: 54, right: mainOverlayRight, zIndex: 2 }}>
                       <SearchBar search={search} inputRef={searchInputRef} />
                     </Box>
                   )}
@@ -619,6 +624,7 @@ export default function Home() {
                     search={search.isOpen && search.regex
                       ? { regex: search.regex, current: search.matches[search.currentIndex] }
                       : undefined}
+                    minimap={config.showMinimap}
                   />
                 </Box>
               </Resizable>

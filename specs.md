@@ -36,7 +36,8 @@ A vertical flex column containing:
 
 1. **Main Serial Terminal** (top, default ~70% height, vertically resizable)
    - Displays all incoming log lines
-   - Toolbar (top-right overlay, left to right):
+   - [Minimap](#minimap) on the right edge, unless disabled in the [Config tab](#config-tab)
+   - Toolbar (top-right overlay, left of the minimap, left to right):
      - **Search** (magnifier icon) — opens or closes the [search bar](#search) (also Ctrl+F); highlighted in blue while open
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
      - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
@@ -150,9 +151,24 @@ Search in the main terminal, like the find widget of a code editor.
 A marker is a numbered line inserted by the user to delimit a part of the log, e.g. a reproduction attempt.
 
 - **Insertion**: Ctrl+M or the toolbar **Insert marker** button calls `add_marker`, which appends `----- MARK n -----` at the end of the log (`n` starts at 1 and increases with each marker; clearing the logs, with the Clear button, Ctrl+Shift+R or the MCP `clear_logs` tool, starts it again at 1). The line gets a reception timestamp.
-- **Insertion above a line**: hovering a row of the main terminal shows an **Insert a marker above** button (bookmark icon, marker color) at the height of that row. It is a single button over the list, 20px from its right edge so it stays clear of the vertical scrollbar, and horizontal scrolling does not move it. The row is the one at the pointer height, also where a short row does not reach when scrolled horizontally; it is updated when the pointer moves, on scroll and when the lines change. Clicking it calls `insert_marker` and inserts the marker just above that line, without selecting the row. The marker takes the next number, so numbers follow the insertion order, not the log order. It gets the timestamp of the line above it (none above the first line), so it does not change which timestamps are shown. In the focus terminal it goes after the closest focus line above it in the main log, or else before the closest one below it. Its id is new, so larger than the ids of the lines around it, see [log store](#log-store).
+- **Insertion above a line**: hovering a row of the main terminal shows an **Insert a marker above** button (bookmark icon, marker color) at the height of that row. It is a single button over the list, 20px from its right edge (left of the [minimap](#minimap) when shown) so it stays clear of the vertical scrollbar, and horizontal scrolling does not move it. The row is the one at the pointer height, also where a short row does not reach when scrolled horizontally; it is updated when the pointer moves, on scroll and when the lines change. Clicking it calls `insert_marker` and inserts the marker just above that line, without selecting the row. The marker takes the next number, so numbers follow the insertion order, not the log order. It gets the timestamp of the line above it (none above the first line), so it does not change which timestamps are shown. In the focus terminal it goes after the closest focus line above it in the main log, or else before the closest one below it. Its id is new, so larger than the ids of the lines around it, see [log store](#log-store).
 - **Style**: bold violet text (`#c586c0`) on a light tint of it (`rgba(197,134,192,0.12)`), unless the row is selected.
 - **Behavior**: a marker is not processed by the highlight rules (`marker_payload`, text HTML-escaped). It is flagged `matched`, so it also appears in the focus terminal and delimits the focus lines. It is recorded in the log store (visible to MCP clients) and written by Save like any line. Refresh sends the marker flags back (`add_logs_line` `markers`), so markers stay markers. To go back to a marker, search for `MARK`.
+
+### Minimap
+Enabled by the **Show minimap** setting of the [Config tab](#config-tab) (on by default). Like in VS Code, an 80px wide overview of the main log on the right edge of the main terminal (`LogMinimap`).
+
+- **Content**: each line is 2px tall and each character 1px wide, starting 4px from the left edge. Words (runs of non-space characters) are drawn as blocks in the color of their highlight rule, or `#d4d4d4` without one, at 60% opacity; characters beyond the minimap width are not drawn. The colors come from the line HTML (`<span style="color:...;">` runs built by the backend), parsed once per line and cached (`WeakMap` keyed by message). Lines hidden by a `remove` + `whole_line` rule are left out, as in the terminal.
+- **Markers**: a [marker](#markers) is a full-width bar in the marker color (`#c586c0`).
+- **Selected line**: a full-width white tint (`rgba(255,255,255,0.25)`).
+- **Search matches**: while the [search bar](#search) is open, a line with matches gets a full-width yellow tint (`rgba(230,190,60,0.25)`) and each match a block (`rgba(230,190,60,0.9)`, the current one orange `rgb(255,140,0)`), at least 2px wide. Ranges come from the search cache (`lineRanges`).
+- **Scale and scrolling**: a terminal row (20px) is 10 times smaller in the minimap. While the whole log fits in the minimap height, it is drawn from the top. Otherwise the minimap scrolls with the terminal, proportionally: its top shows the start of the log when the terminal is at the top, its bottom the end of the log when the terminal is at the bottom.
+- **Slider**: a gray overlay (`rgba(121,121,121,0.2)`, lighter on hover and while dragged) over the part of the log visible in the terminal.
+- **Interactions**: dragging the slider scrolls the terminal so that the slider follows the pointer. Pressing elsewhere centers the clicked line in the terminal, then drags from there. The wheel over the minimap scrolls the terminal. Like a manual scroll, scrolling away from the bottom disables [auto-scroll](#auto-scroll). The row under the pointer is not highlighted while the pointer is over the minimap.
+- **Vertical scrollbar**: hidden while the minimap is shown, since the slider gives the same information; the horizontal scrollbar stays. The list gets `overflow-y: hidden` (`overflow-x: auto`), so it no longer scrolls vertically by itself: the wheel over it scrolls it (`scrollByWheel`, pixel, line or page deltas; Shift + wheel is left to the native horizontal scroll). CSS cannot hide only the vertical scrollbar in every webview: `scrollbar-width: none` also hides the horizontal one, `::-webkit-scrollbar { width: 0 }` is ignored by WebView2 (Windows), which applies the standard `scrollbar-width: thin` of `globals.css` instead. Making the list wider than a clipping container by the measured scrollbar width was tried first: it works with classic scrollbars, but the scrollbar stayed visible in WebKitGTK (Linux), most likely an overlay scrollbar drawn over the content, which has no width to measure.
+- **Rendering**: a `<canvas>` sized for the device pixel ratio. Only the lines in view are drawn (a few hundred whatever the log length), at most once per animation frame: on terminal scroll (the terminal calls a `redraw` handle from its `onScroll`), on minimap resize, and on every render of the terminal (new lines, search, selection). About 3ms per draw with 200,000 lines.
+- **No library**: existing minimap packages target a specific editor or canvas (CodeMirror, React Flow, CKEditor...), or clone the DOM, which does not work with a virtualized list.
+- **Scope**: the main terminal only, not the focus terminal.
 
 ### Auto-scroll
 - When enabled, the list automatically scrolls to the last row when new logs arrive
@@ -235,6 +251,7 @@ Occupy the remaining height of the panel. The content of the active tab scrolls 
 | Setting | Default | Effect |
 |---|---|---|
 | **Show line numbers** (checkbox) | off | Shows a [line number gutter](#line-numbers) in the main and focus terminals |
+| **Show minimap** (checkbox) | on | Shows the [minimap](#minimap) on the right of the main terminal, and hides its vertical scrollbar |
 | **Show timestamps** (checkbox) | on | Shows the [reception time](#timestamps) of each line in the main and focus terminals |
 | **Include timestamps in copied and saved text** (checkbox, indented) | off | Makes the timestamp column selectable and part of copied and saved text. Disabled while timestamps are hidden |
 | **Only after inactivity** (checkbox, indented) + **Delay (ms)** (number field) | on, 500 | Only shows a timestamp on a line arriving after the delay without any line, see [Timestamps](#timestamps). The field is disabled while the checkbox is off; it accepts integers ≥ 0, saves valid values as typed and shows the saved value again when it loses focus (`IntegerField`) |
@@ -660,6 +677,7 @@ app/
   components/
     SerialTerminal.tsx       — Virtualized log viewer
     SerialTerminalLine.tsx   — Individual row renderer
+    LogMinimap.tsx           — Minimap of the main terminal
     ControlPanel.tsx         — Tabbed source + settings panel
     SerialSettings.tsx       — Serial port configuration
     FileSettings.tsx         — File follow configuration (File tab)
