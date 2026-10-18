@@ -216,12 +216,7 @@ const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode):
     (!isRegex && selectMode === 'custom') ? 'match' : selectMode;
 
 /** Parses a persisted JSON config entry into a runtime HighligtConfig, with safe defaults */
-function parsePersistedHighlight(
-    h: PersistedHighlightConfig,
-    index: number,
-    normalizeSelectMode: (isRegex: boolean, mode: HighlightSelectMode) => HighlightSelectMode,
-    getSelectModeFromPersisted: (h: PersistedHighlightConfig) => HighlightSelectMode,
-): HighligtConfig {
+function parsePersistedHighlight(h: PersistedHighlightConfig, index: number): HighligtConfig {
     const isRegex = h.is_regex ?? true;
     const color = h.color ?? DEFAULT_HIGHLIGHT_COLOR;
     const selectMode = normalizeSelectMode(isRegex, getSelectModeFromPersisted(h));
@@ -260,7 +255,7 @@ const HighLighSettings: React.FC = () => {
         readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig })
             .then(result => {
                 const persisted = JSON.parse(result) as PersistedHighlightConfig[];
-                setHighlights(persisted.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
+                setHighlights(persisted.map(parsePersistedHighlight));
             })
             .catch(e => console.error('Failed to load highlights:', e));
     }, [setHighlights]);
@@ -274,12 +269,7 @@ const HighLighSettings: React.FC = () => {
     // Rule added by an MCP client (add_highlight): appended as if the user had filled a new row
     useEffect(() => {
         const unlisten = listen<PersistedHighlightConfig>('mcp-add-highlight', (e) => {
-            const rule = parsePersistedHighlight(
-                { ...e.payload, id: createDefaultHighlight().id },
-                0,
-                normalizeSelectMode,
-                getSelectModeFromPersisted,
-            );
+            const rule = parsePersistedHighlight({ ...e.payload, id: createDefaultHighlight().id }, 0);
             // Updated right away so rules added in quick succession are all kept
             const next = [...(highlightsRef.current ?? []), rule];
             highlightsRef.current = next;
@@ -513,7 +503,7 @@ const HighLighSettings: React.FC = () => {
                         try {
                             const result = await readTextFile(filePath);
                             const parsed = JSON.parse(result) as PersistedHighlightConfig[];
-                            setHighlights(parsed.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
+                            setHighlights(parsed.map(parsePersistedHighlight));
                         } catch (e) {
                             console.error('Failed to load highlights:', e);
                         }
