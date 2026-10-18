@@ -73,6 +73,34 @@ const addMarker = () => {
   invoke<void>('add_marker').catch((err: unknown) => console.error(err));
 };
 
+/**
+ * Updates of a list of lines. Appended lines are applied once per frame: copying the whole list
+ * for each line received would make receiving a long log quadratic, and render the page for each
+ * line. Replacing the list drops the lines still waiting to be appended.
+ */
+const createLineList = (setLines: React.Dispatch<React.SetStateAction<SerialMessage[]>>) => {
+  let pending: SerialMessage[] = [];
+  let frame = 0;
+  return {
+    append(lines: SerialMessage[]) {
+      pending.push(...lines);
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const batch = pending;
+        pending = [];
+        setLines(prev => prev.concat(batch));
+      });
+    },
+    replace(lines: SerialMessage[]) {
+      pending = [];
+      cancelAnimationFrame(frame);
+      frame = 0;
+      setLines(lines);
+    },
+  };
+};
+
 /** Generates synthetic UART-style log lines for demo purposes */
 const generateDemoLogs = (count: number): string[] => {
   const result: string[] = [];
@@ -104,6 +132,8 @@ export default function Home() {
   const [config, updateConfig] = useAppConfig();
   const [logs, setLogs] = useState<SerialMessage[]>([]);
   const [focusLogs, setFocusLogs] = useState<SerialMessage[]>([]);
+  const [mainList] = useState(() => createLineList(setLogs));
+  const [focusList] = useState(() => createLineList(setFocusLogs));
   const [selectedMainLineId, setSelectedMainLineId] = useState<number | null>(null);
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
@@ -135,8 +165,8 @@ export default function Home() {
       .catch((err: unknown) => console.error(err));
   };
 
-  const clearLogs = () => setLogs([]);
-  const clearFocusLogs = () => setFocusLogs([]);
+  const clearLogs = () => mainList.replace([]);
+  const clearFocusLogs = () => focusList.replace([]);
 
   // User clear: also empties the backend log store, so MCP clients see the same log
   const onClearLogs = () => {
@@ -151,8 +181,8 @@ export default function Home() {
       if (!e.ctrlKey) return;
       const key = e.key.toLowerCase();
       if (e.shiftKey && key === 'r') {
-        setLogs([]);
-        setFocusLogs([]);
+        mainList.replace([]);
+        focusList.replace([]);
         invoke<void>('clear_logs').catch((err: unknown) => console.error(err));
       } else if (!e.shiftKey && key === 'f') {
         openSearch();
@@ -167,7 +197,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [openSearch]);
+  }, [openSearch, mainList, focusList]);
 
   // Log files are written by the backend, which gets their settings at launch and on every
   // change. Lines are written as Save writes them, so it also gets the timestamp settings.
@@ -287,13 +317,6 @@ export default function Home() {
     invoke<void>('refresh_logs').catch((err: unknown) => console.error(err));
   };
 
-  const addSingleLog = (log: SerialMessage) => {
-    setLogs(prev => [...prev, log]);
-  };
-
-  const addSingleFocusLog = (log: SerialMessage) => {
-    setFocusLogs(prev => [...prev, log]);
-  };
   useEffect(() => {
     if (isMainAutoScrollEnabled && listRefMain.current && logs.length > 0) {
       scrollToRow(listRefMain, logs.length - 1, 'auto');
@@ -309,28 +332,24 @@ export default function Home() {
     // replacing the whole log (file open, Refresh) are not
     const unlisten_serial_data = listen<SerialMessage>('serial-data', (e) => {
       const line = { ...e.payload, arrivedAt: Date.now() };
-      addSingleLog(line);
-      if (line.matched) addSingleFocusLog(line);
+      mainList.append([line]);
+      if (line.matched) focusList.append([line]);
     });
-    const unlisten_serial_datas = listen<SerialMessage[]>('serial-datas', (e) => {
-      setLogs(e.payload);
-    });
-    const unlisten_serial_datas_focus = listen<SerialMessage[]>('serial-datas-focus', (e) => {
-      setFocusLogs(e.payload);
-    });
+    const unlisten_serial_datas = listen<SerialMessage[]>('serial-datas', (e) => mainList.replace(e.payload));
+    const unlisten_serial_datas_focus = listen<SerialMessage[]>('serial-datas-focus', (e) => focusList.replace(e.payload));
     const unlisten_serial_datas_append = listen<SerialMessage[]>('serial-datas-append', (e) => {
       const arrivedAt = Date.now();
-      setLogs(prev => [...prev, ...e.payload.map(line => ({ ...line, arrivedAt }))]);
+      mainList.append(e.payload.map(line => ({ ...line, arrivedAt })));
     });
     const unlisten_serial_datas_focus_append = listen<SerialMessage[]>('serial-datas-focus-append', (e) => {
       const arrivedAt = Date.now();
-      setFocusLogs(prev => [...prev, ...e.payload.map(line => ({ ...line, arrivedAt }))]);
+      focusList.append(e.payload.map(line => ({ ...line, arrivedAt })));
     });
     // Emitted when an MCP client calls clear_logs, so the window stays in sync
     // with what the agent just did to the shared buffer.
     const unlisten_logs_cleared = listen('logs-cleared', () => {
-      clearLogs();
-      clearFocusLogs();
+      mainList.replace([]);
+      focusList.replace([]);
     });
 
     return () => {
@@ -341,7 +360,7 @@ export default function Home() {
       unlisten_serial_datas_focus_append.then(f => f());
       unlisten_logs_cleared.then(f => f());
     };
-  }, []);
+  }, [mainList, focusList]);
 
   const onToggleAutoScrollFromLogs = () => {
     setIsMainAutoScrollEnabled((prev) => {

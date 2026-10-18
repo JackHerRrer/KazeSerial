@@ -760,4 +760,6 @@ Two separate commands handle different use cases:
 | `add_logs_line`, `refresh_logs` | `serial-datas` / `serial-datas-focus` | **Replaces** the full log array (used by demo regenerate and Refresh) |
 | `append_logs_line` | `serial-datas-append` / `serial-datas-focus-append` | **Appends** to the existing array (used by demo append and serial port) |
 
+In `page.tsx`, appended lines (`serial-data` and `*-append` events) are applied once per frame (`createLineList`): copying the whole array for each line received would make a long capture quadratic and render the page for each line. Replacing or clearing a list drops the lines still waiting to be appended to it, so they cannot reappear after it.
+
 This avoids resending thousands of existing lines to the backend just to append new ones.
