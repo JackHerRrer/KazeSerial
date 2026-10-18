@@ -83,7 +83,7 @@ The terminals pane uses `position: relative` on its outer Box with `overflow: hi
 ### Behavior
 - Uses a virtualized list (`react-window`) for performance with large log counts
 - Each row is 20px tall; rows with `removed_line = true` have height 0 (invisible)
-- Log text is rendered as HTML via `dangerouslySetInnerHTML` to support `<span style="color:...">` highlight markup. The backend escapes the log text, so only its own `<span>` tags are interpreted (see [Highlight processing pipeline](#highlight-processing-pipeline-parse_log_line))
+- Log text is rendered as HTML via `dangerouslySetInnerHTML` to support `<span style="color:...">` highlight markup. The backend escapes the log text, so only its own `<span>` tags are interpreted (see [Highlight processing pipeline](#highlight-processing-pipeline-process_line))
 - Font: monospace, 0.875rem, color `#d4d4d4`, background `#1e1e1e`
 - Rows are as wide as their content (`width: max-content`, at least the terminal width), so the sticky gutter (line numbers, timestamps) stays visible on long lines
 
@@ -505,7 +505,7 @@ Used by Demo regenerate. Processes a batch of raw lines, without timestamps, thr
 #### `refresh_logs()`
 Used by Refresh and the MCP `refresh_logs` tool. Re-applies the current highlight rules to every line of the [log store](#log-store), which holds the lines shown, and emits `serial-datas` / `serial-datas-focus`. Lines keep their id, timestamp and marker flag. The lines are processed in parallel without `publish_lock`, so lines keep being received; then, under the lock, the lines published meanwhile are processed too and the result replaces the log.
 
-### Highlight processing pipeline (`parse_log_line`)
+### Highlight processing pipeline (`process_line`)
 
 Implemented by `process_line`, which is pure so batches can run in parallel.
 
