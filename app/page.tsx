@@ -42,7 +42,7 @@ const darkTheme = createTheme({
   typography: { button: { textTransform: 'none' } },
 });
 
-/** Generates synthetic UART-style log lines for demo purposes */
+// Scrolls the list so that row `rowIndex` is at its bottom
 const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
   listRef.current?.scrollToRow({ align: 'end', behavior, index: rowIndex });
 };
@@ -68,6 +68,7 @@ const findLogIndex = (lines: SerialMessage[], id: number): number => {
 const insertAt = (lines: SerialMessage[], index: number, line: SerialMessage): SerialMessage[] =>
   [...lines.slice(0, index), line, ...lines.slice(index)];
 
+/** Generates synthetic UART-style log lines for demo purposes */
 const generateDemoLogs = (count: number): string[] => {
   const result: string[] = [];
   for (let i = 0; i < count; i++) {
