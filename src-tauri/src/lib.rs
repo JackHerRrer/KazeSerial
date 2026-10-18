@@ -1756,6 +1756,12 @@ mod test_app {
     pub fn app_with_window() -> (tauri::App<tauri::test::MockRuntime>, Window) {
         let app = tauri::test::mock_app();
         app.manage(AppState::new());
+        // Tests never write log files
+        app.state::<AppState>()
+            .log_files
+            .lock()
+            .unwrap()
+            .set_settings(log_file::LogFileSettings { enabled: false, ..Default::default() });
         let window: Window = Default::default();
         let list = window.clone();
         app.listen_any("serial-data", move |event| {
