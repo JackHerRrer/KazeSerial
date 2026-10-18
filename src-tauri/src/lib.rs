@@ -10,12 +10,12 @@ use regex::Regex;
 use rayon::prelude::*;
 use serial_splitter::SerialSplitter;
 use serialport::{SerialPort, SerialPortType};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tail_splitter::{decode_utf8, TailSplitter};
-use tauri::{Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::{Mutex, Notify};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
@@ -143,7 +143,7 @@ fn make_timestamp() -> String {
 /// Emits a KazeSerial system message as a regular `serial-data` event.
 /// These appear in the log with format `[HH:MM:SS] KazeSerial: {msg}`.
 /// The message is processed through the current highlight rules like any other line.
-async fn emit_system_msg(app: &tauri::AppHandle, msg: String) {
+async fn emit_system_msg(app: &AppHandle<impl Runtime>, msg: String) {
     let raw = format!("[{}] KazeSerial: {}", make_timestamp(), msg);
     let state = app.state::<AppState>();
     let message_id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
@@ -182,12 +182,30 @@ struct AppState {
     /// Signaled when the window sends its highlight rules, so an MCP tool that asked the
     /// window to change them knows when they apply.
     highlights_updated: Arc<Notify>,
-    /// Signaled when the window replaces the whole log (Refresh, file open), so an MCP tool
-    /// that asked for a Refresh knows when it is done.
-    logs_replaced: Arc<Notify>,
+    /// Held while the log store is changed and the change emitted, so the window receives the
+    /// changes in the order of the store, see [`refresh`].
+    publish_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
+    fn new() -> Self {
+        Self {
+            serial_connection: Arc::new(Mutex::new(None)),
+            highlights: Arc::new(Mutex::new(Vec::new())),
+            message_id_counter: Arc::new(AtomicU64::new(1)),
+            marker_counter: Arc::new(AtomicU64::new(0)),
+            // Default folder set in `setup`, once the paths are known
+            log_files: Arc::new(std::sync::Mutex::new(LogFiles::new(std::path::PathBuf::new()))),
+            file_watch_active: Arc::new(AtomicBool::new(false)),
+            log_store: Arc::new(LogStore::new()),
+            serial_connected: Arc::new(AtomicBool::new(false)),
+            serial_session: Arc::new(AtomicU64::new(0)),
+            mcp_server: Arc::new(Mutex::new(None)),
+            highlights_updated: Arc::new(Notify::new()),
+            publish_lock: Arc::new(Mutex::new(())),
+        }
+    }
+
     /// Called when the logs are cleared: the next marker is numbered 1 again.
     fn reset_markers(&self) {
         self.marker_counter.store(0, Ordering::SeqCst);
@@ -213,11 +231,20 @@ fn record_of(payload: &Payload) -> LogRecord {
             .unwrap_or_else(|| payload.message.clone()),
         focus: payload.matched,
         removed: payload.removed_line,
+        timestamp: payload.timestamp,
+        marker: payload.marker,
     }
 }
 
 /// Records a batch and emits it as a full replacement of the webview's log list.
-async fn publish_replace(app: &tauri::AppHandle, results: Vec<Payload>) {
+async fn publish_replace(app: &AppHandle<impl Runtime>, results: Vec<Payload>) {
+    let state = app.state::<AppState>();
+    let _publishing = state.publish_lock.lock().await;
+    replace_and_emit(app, results).await;
+}
+
+/// [`publish_replace`], for a caller already holding the publication lock.
+async fn replace_and_emit(app: &AppHandle<impl Runtime>, results: Vec<Payload>) {
     let records: Vec<LogRecord> = results.iter().map(record_of).collect();
     app.state::<AppState>().log_store.replace(records).await;
 
@@ -227,9 +254,11 @@ async fn publish_replace(app: &tauri::AppHandle, results: Vec<Payload>) {
 }
 
 /// Records a batch and emits it as an append to the webview's log list.
-async fn publish_append(app: &tauri::AppHandle, results: Vec<Payload>) {
+async fn publish_append(app: &AppHandle<impl Runtime>, results: Vec<Payload>) {
+    let state = app.state::<AppState>();
+    let _publishing = state.publish_lock.lock().await;
     let records: Vec<LogRecord> = results.iter().map(record_of).collect();
-    app.state::<AppState>().log_store.append(records).await;
+    state.log_store.append(records).await;
 
     let focus: Vec<Payload> = results.iter().filter(|p| p.matched).cloned().collect();
     let _ = app.emit("serial-datas-append", results);
@@ -239,8 +268,9 @@ async fn publish_append(app: &tauri::AppHandle, results: Vec<Payload>) {
 /// Records a single line, writes it to the log file and emits it as a `serial-data` event.
 /// Used for the lines received from the serial port, system messages and markers appended at
 /// the end of the log, which are exactly the lines saved to [log files](log_file).
-async fn publish_one(app: &tauri::AppHandle, payload: Payload) {
+async fn publish_one(app: &AppHandle<impl Runtime>, payload: Payload) {
     let state = app.state::<AppState>();
+    let publishing = state.publish_lock.lock().await;
     let record = record_of(&payload);
     let log_file_error = state
         .log_files
@@ -249,6 +279,8 @@ async fn publish_one(app: &tauri::AppHandle, payload: Payload) {
         .write(&record.text, payload.timestamp);
     state.log_store.append(vec![record]).await;
     let _ = app.emit("serial-data", payload);
+    // Released before the error message, which is published too
+    drop(publishing);
     // Not written to the file: writing is paused after a failure
     if let Some(error) = log_file_error {
         Box::pin(emit_system_msg(app, format!("Log file error: {}", error))).await;
@@ -256,7 +288,7 @@ async fn publish_one(app: &tauri::AppHandle, payload: Payload) {
 }
 
 /// Processes `lines` and their reception times through the current highlight rules, in parallel.
-async fn process_batch(app: &tauri::AppHandle, lines: Vec<(String, Option<u64>)>) -> Vec<Payload> {
+async fn process_batch(app: &AppHandle<impl Runtime>, lines: Vec<(String, Option<u64>)>) -> Vec<Payload> {
     let state = app.state::<AppState>();
     let highlights_vec = state.highlights.lock().await.clone();
     let start_id = state
@@ -596,34 +628,57 @@ async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payloa
     process_line(input_line, &highlights_vec, message_id, Some(now_ms()))
 }
 
-/// Replaces the whole log with `lines`. `source` labels where they came from for
-/// MCP clients; pass `None` to leave the current label alone (e.g. when merely
-/// re-applying highlight rules to lines already shown).
+/// Replaces the whole log with generated `lines` (demo), which have no reception time.
 #[tauri::command]
-async fn add_logs_line(
-    lines: Vec<String>,
-    // Reception times to keep when reprocessing (Refresh); `None` for generated lines
-    timestamps: Option<Vec<Option<u64>>>,
-    // Lines that are markers, kept as markers when reprocessing (Refresh)
-    markers: Option<Vec<bool>>,
-    emitter: tauri::AppHandle,
-) -> Result<(), String> {
-    let mut timestamps = timestamps.unwrap_or_default().into_iter();
-    let lines = lines
-        .into_iter()
-        .map(|line| (line, timestamps.next().flatten()))
-        .collect();
-    let mut markers = markers.unwrap_or_default().into_iter();
-    let results = process_batch(&emitter, lines)
-        .await
-        .into_iter()
-        .map(|payload| match markers.next() {
-            Some(true) => marker_payload(payload.rawline.unwrap_or(payload.message), payload.id, payload.timestamp),
-            _ => payload,
-        })
-        .collect();
+async fn add_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<(), String> {
+    let results = process_batch(&emitter, with_timestamp(lines, None)).await;
     publish_replace(&emitter, results).await;
-    emitter.state::<AppState>().logs_replaced.notify_waiters();
+    Ok(())
+}
+
+/// Processes a recorded line again through `highlights`, keeping its id, reception time and
+/// marker flag.
+fn reprocess(record: LogRecord, highlights: &[HighlightSettings]) -> Payload {
+    if record.marker {
+        marker_payload(record.text, record.id, record.timestamp)
+    } else {
+        process_line(record.text, highlights, record.id, record.timestamp)
+    }
+}
+
+/// Re-applies the current highlight rules to the whole log, for the Refresh button and the MCP
+/// `refresh_logs` tool. Lines keep their id, reception time and marker flag.
+///
+/// The log store holds every line shown, so the lines are taken from it and processed in parallel
+/// without the publication lock: lines keep being received meanwhile. Under the lock, the lines
+/// published meanwhile are processed too and the result replaces the log, so no line received
+/// during a Refresh is lost or shown twice.
+async fn refresh(app: &AppHandle<impl Runtime>) {
+    let state = app.state::<AppState>();
+    let highlights = state.highlights.lock().await.clone();
+    let mut processed: HashMap<u64, Payload> = state
+        .log_store
+        .map_records(LogRecord::clone)
+        .await
+        .into_par_iter()
+        .map(|record| (record.id, reprocess(record, &highlights)))
+        .collect();
+
+    let _publishing = state.publish_lock.lock().await;
+    let results = state
+        .log_store
+        .map_records(|record| {
+            processed
+                .remove(&record.id)
+                .unwrap_or_else(|| reprocess(record.clone(), &highlights))
+        })
+        .await;
+    replace_and_emit(app, results).await;
+}
+
+#[tauri::command]
+async fn refresh_logs(app: tauri::AppHandle) -> Result<(), String> {
+    refresh(&app).await;
     Ok(())
 }
 
@@ -647,6 +702,7 @@ async fn insert_marker(
     state: tauri::State<'_, AppState>,
 ) -> Result<Payload, String> {
     let payload = state.next_marker(timestamp);
+    let _publishing = state.publish_lock.lock().await;
     state.log_store.insert_before(before_id, record_of(&payload)).await;
     Ok(payload)
 }
@@ -1056,6 +1112,7 @@ async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
 /// cleared what the user asked for.
 #[tauri::command]
 async fn clear_logs(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let _publishing = state.publish_lock.lock().await;
     state.log_store.clear().await;
     state.reset_markers();
     Ok(())
@@ -1266,21 +1323,6 @@ const DEFAULT_MCP_PORT: u16 = 9339;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let state = AppState {
-        serial_connection: Arc::new(Mutex::new(None)),
-        highlights: Arc::new(Mutex::new(Vec::new())),
-        message_id_counter: Arc::new(AtomicU64::new(1)),
-        marker_counter: Arc::new(AtomicU64::new(0)),
-        // Default folder set in `setup`, once the paths are known
-        log_files: Arc::new(std::sync::Mutex::new(LogFiles::new(std::path::PathBuf::new()))),
-        file_watch_active: Arc::new(AtomicBool::new(false)),
-        log_store: Arc::new(LogStore::new()),
-        serial_connected: Arc::new(AtomicBool::new(false)),
-        serial_session: Arc::new(AtomicU64::new(0)),
-        mcp_server: Arc::new(Mutex::new(None)),
-        highlights_updated: Arc::new(Notify::new()),
-        logs_replaced: Arc::new(Notify::new()),
-    };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init());
@@ -1315,7 +1357,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .manage(state)
+        .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             list_ports,
             open_port,
@@ -1323,6 +1365,7 @@ pub fn run() {
             set_highlights,
             add_logs_line,
             append_logs_line,
+            refresh_logs,
             clear_logs,
             add_marker,
             insert_marker,
@@ -1709,5 +1752,108 @@ mod process_line_tests {
         let payload = process("abc", vec![regex("x*", R)]);
         assert_eq!(rendered(&payload.message), "abc");
         assert_eq!(payload.rawline.as_deref(), Some("abc"));
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    use tauri::Listener;
+
+    /// Ids of the main log list, updated from the events as `page.tsx` does.
+    type Window = Arc<std::sync::Mutex<Vec<u64>>>;
+
+    fn ids_of(payload: &str) -> Vec<u64> {
+        let lines: Vec<serde_json::Value> = serde_json::from_str(payload).unwrap();
+        lines.iter().map(|line| line["id"].as_u64().unwrap()).collect()
+    }
+
+    fn app_with_window() -> (tauri::App<tauri::test::MockRuntime>, Window) {
+        let app = tauri::test::mock_app();
+        app.manage(AppState::new());
+        let window: Window = Default::default();
+        let list = window.clone();
+        app.listen_any("serial-data", move |event| {
+            let line: serde_json::Value = serde_json::from_str(event.payload()).unwrap();
+            list.lock().unwrap().push(line["id"].as_u64().unwrap());
+        });
+        let list = window.clone();
+        app.listen_any("serial-datas-append", move |event| list.lock().unwrap().extend(ids_of(event.payload())));
+        let list = window.clone();
+        app.listen_any("serial-datas", move |event| *list.lock().unwrap() = ids_of(event.payload()));
+        (app, window)
+    }
+
+    #[test]
+    fn lines_received_during_a_refresh_are_kept_once() {
+        let (app, window) = app_with_window();
+        let handle = app.handle().clone();
+        tauri::async_runtime::block_on(async move {
+            let lines = (0..20_000).map(|i| format!("line {i}")).collect();
+            publish_append(&handle, process_batch(&handle, with_timestamp(lines, Some(1))).await).await;
+
+            // Lines received from the serial port while the log is refreshed again and again
+            let serial = handle.clone();
+            let receiving = tokio::spawn(async move {
+                let state = serial.state::<AppState>();
+                for i in 0..2_000 {
+                    let id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
+                    publish_one(&serial, process_line(format!("serial {i}"), &[], id, Some(now_ms()))).await;
+                    tokio::task::yield_now().await;
+                }
+            });
+            while !receiving.is_finished() {
+                refresh(&handle).await;
+            }
+            receiving.await.unwrap();
+
+            // Counts rather than the lists, which would be unreadable on failure
+            let lost = |ids: &[u64]| {
+                let ids: HashSet<&u64> = ids.iter().collect();
+                (1..=22_000).filter(|id| !ids.contains(id)).count()
+            };
+            let stored = handle.state::<AppState>().log_store.map_records(|record| record.id).await;
+            assert_eq!((lost(&stored), stored.len()), (0, 22_000), "lines lost, lines recorded");
+            assert!(stored.windows(2).all(|pair| pair[0] < pair[1]), "lines recorded in order");
+            let shown = window.lock().unwrap().clone();
+            assert_eq!((lost(&shown), shown.len()), (0, 22_000), "lines lost, lines shown");
+            assert!(shown == stored, "the window shows the recorded lines");
+        });
+    }
+
+    #[test]
+    fn refresh_keeps_ids_timestamps_and_markers() {
+        let (app, window) = app_with_window();
+        let handle = app.handle().clone();
+        tauri::async_runtime::block_on(async move {
+            let state = handle.state::<AppState>();
+            publish_append(&handle, process_batch(&handle, with_timestamp(vec!["a".into(), "b".into()], Some(7))).await).await;
+            publish_one(&handle, state.next_marker(Some(8))).await;
+            *state.highlights.lock().await = vec![build_highlight_settings(HighlightMessage {
+                id: 0,
+                text: "b".into(),
+                color: "R".into(),
+                is_regex: false,
+                case_sensitive: true,
+                select_mode: HighlightSelectMode::Match,
+                custom_select: String::new(),
+                whole_line: false,
+                advanced_selections: Vec::new(),
+                focus: true,
+                remove: false,
+            })
+            .unwrap()];
+
+            refresh(&handle).await;
+
+            let records = state.log_store.map_records(LogRecord::clone).await;
+            let summary: Vec<_> = records.iter().map(|r| (r.id, r.text.as_str(), r.timestamp, r.marker, r.focus)).collect();
+            assert_eq!(summary, vec![
+                (1, "a", Some(7), false, false),
+                (2, "b", Some(7), false, true),
+                (3, "----- MARK 1 -----", Some(8), true, true),
+            ]);
+            assert_eq!(*window.lock().unwrap(), vec![1, 2, 3]);
+        });
     }
 }

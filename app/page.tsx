@@ -214,12 +214,15 @@ export default function Home() {
     invoke<SerialMessage>('insert_marker', { beforeId: lineId, timestamp })
       .then((payload) => {
         const marker = { ...payload, arrivedAt: Date.now() };
-        // Positions are looked up again, the logs may have changed meanwhile
+        // Positions are looked up again, the logs may have changed meanwhile. A Refresh may
+        // already have shown the marker, as it reads the lines from the backend
+        const isShown = (lines: SerialMessage[]) => lines.some(line => line.id === marker.id);
         setLogs(prev => {
           const at = findLogIndex(prev, lineId);
-          return at < 0 ? prev : insertAt(prev, at, marker);
+          return at < 0 || isShown(prev) ? prev : insertAt(prev, at, marker);
         });
         setFocusLogs(prev => {
+          if (isShown(prev)) return prev;
           const above = focusAboveId === undefined ? -1 : prev.findIndex(line => line.id === focusAboveId);
           if (above >= 0) return insertAt(prev, above + 1, marker);
           const below = focusBelowId === undefined ? -1 : prev.findIndex(line => line.id === focusBelowId);
@@ -279,23 +282,11 @@ export default function Home() {
     return timestampColumnText(timestamp, timestamps.width) + text;
   };
 
-  // Re-apply current highlight rules to all existing raw lines
+  // Re-apply current highlight rules to all lines: the backend reprocesses the lines it recorded
+  // and replaces the logs, without losing the lines received meanwhile
   const onClickRefreshAll = () => {
-    const rawLines = logs.map(log => log.rawline ?? log.message);
-    clearFocusLogs();
-    clearLogs();
-    // Reception times and markers are sent back so reprocessed lines keep them
-    const timestamps = logs.map(log => log.timestamp ?? null);
-    const markers = logs.map(log => log.marker ?? false);
-    invoke<void>('add_logs_line', { lines: rawLines, timestamps, markers })
-      .catch((err: unknown) => console.error(err));
+    invoke<void>('refresh_logs').catch((err: unknown) => console.error(err));
   };
-
-  // Latest Refresh, called by the MCP listener without re-subscribing on every change
-  const refreshAllRef = useRef(onClickRefreshAll);
-  useEffect(() => {
-    refreshAllRef.current = onClickRefreshAll;
-  });
 
   const addSingleLog = (log: SerialMessage) => {
     setLogs(prev => [...prev, log]);
@@ -342,8 +333,6 @@ export default function Home() {
       clearLogs();
       clearFocusLogs();
     });
-    // Emitted when an MCP client calls refresh_logs: same as clicking Refresh
-    const unlisten_refresh_logs = listen('mcp-refresh-logs', () => refreshAllRef.current());
 
     return () => {
       unlisten_serial_data.then(f => f());
@@ -352,7 +341,6 @@ export default function Home() {
       unlisten_serial_datas_append.then(f => f());
       unlisten_serial_datas_focus_append.then(f => f());
       unlisten_logs_cleared.then(f => f());
-      unlisten_refresh_logs.then(f => f());
     };
   }, []);
 

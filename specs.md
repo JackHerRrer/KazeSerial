@@ -40,7 +40,7 @@ A vertical flex column containing:
    - Toolbar (top-right overlay, left of the minimap, left to right):
      - **Search** (magnifier icon) — opens or closes the [search bar](#search) (also Ctrl+F); highlighted in blue while open
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
-     - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules
+     - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules (`refresh_logs` command). The lines are read from the backend [log store](#log-store), so lines received meanwhile are neither lost nor shown twice, and lines evicted from the store (past its capacity) disappear
      - **Insert marker** (bookmark icon) — appends a [marker line](#markers) (also Ctrl+M)
      - **Save** (save icon) — saves the main log to a `.log` file
      - **Delete** (delete icon) — clears the main log and the backend [log store](#log-store), so MCP clients see the same log. Ctrl+Shift+R also clears the focus log
@@ -109,7 +109,7 @@ Enabled by the **Show timestamps** setting of the [Config tab](#config-tab). Sho
   | Demo append (`append_logs_line`) | when appended |
   | Opened file (`open_file`), initial content of a followed file, Demo regenerate | none (`null`), the real time is unknown |
 
-- **Refresh** sends the timestamps back with the raw lines (`add_logs_line` `timestamps`), so reprocessed lines keep them.
+- **Refresh** keeps the timestamps: the log store records them with the lines it reprocesses.
 - **Focus terminal**: a focus line is the same message, so it shows the same time.
 - **Only after inactivity**: a line shows its timestamp only if the previous line of the same terminal arrived at least the delay earlier (default 500 ms), or has no timestamp. Each line restarts the delay, so a steady flow of lines closer than the delay shows a single timestamp, on its first line. The gap is measured within each terminal: in the focus terminal, from the previous focus line. Lines hidden by a `remove` + `whole_line` rule count as activity. Implemented by `isTimestampShown` in `utils/timestamp.ts`, shared by the display and Save.
 - **Format**: local time, formatted with the **Format** setting (`formatTimestamp` in `utils/timestamp.ts`), `HH:mm:ss` by default. A format is a pattern where these codes are replaced and any other character is kept as is:
@@ -153,7 +153,7 @@ A marker is a numbered line inserted by the user to delimit a part of the log, e
 - **Insertion**: Ctrl+M or the toolbar **Insert marker** button calls `add_marker`, which appends `----- MARK n -----` at the end of the log (`n` starts at 1 and increases with each marker; clearing the logs, with the Clear button, Ctrl+Shift+R or the MCP `clear_logs` tool, starts it again at 1). The line gets a reception timestamp.
 - **Insertion above a line**: hovering a row of the main terminal shows an **Insert a marker above** button (bookmark icon, marker color) at the height of that row. It is a single button over the list, 20px from its right edge (left of the [minimap](#minimap) when shown) so it stays clear of the vertical scrollbar, and horizontal scrolling does not move it. The row is the one at the pointer height, also where a short row does not reach when scrolled horizontally; it is updated when the pointer moves, on scroll and when the lines change. Clicking it calls `insert_marker` and inserts the marker just above that line, without selecting the row. The marker takes the next number, so numbers follow the insertion order, not the log order. It gets the timestamp of the line above it (none above the first line), so it does not change which timestamps are shown. In the focus terminal it goes after the closest focus line above it in the main log, or else before the closest one below it. Its id is new, so larger than the ids of the lines around it, see [log store](#log-store).
 - **Style**: bold violet text (`#c586c0`) on a light tint of it (`rgba(197,134,192,0.12)`), unless the row is selected.
-- **Behavior**: a marker is not processed by the highlight rules (`marker_payload`, text HTML-escaped). It is flagged `matched`, so it also appears in the focus terminal and delimits the focus lines. It is recorded in the log store (visible to MCP clients) and written by Save like any line. Refresh sends the marker flags back (`add_logs_line` `markers`), so markers stay markers. To go back to a marker, search for `MARK`.
+- **Behavior**: a marker is not processed by the highlight rules (`marker_payload`, text HTML-escaped). It is flagged `matched`, so it also appears in the focus terminal and delimits the focus lines. It is recorded in the log store (visible to MCP clients) and written by Save like any line. Refresh keeps markers as markers: the log store records the marker flag. To go back to a marker, search for `MARK`.
 
 ### Minimap
 Enabled by the **Show minimap** setting of the [Config tab](#config-tab) (on by default). Like in VS Code, an 80px wide overview of the main log on the right edge of the main terminal (`LogMinimap`).
@@ -407,8 +407,13 @@ struct AppState {
     serial_session: Arc<AtomicU64>,    // incremented by every open / close, stops stale reconnection loops
     mcp_server: Arc<Mutex<Option<McpServerHandle>>>,
     highlights_updated: Arc<Notify>,   // signaled by set_highlights, awaited by MCP add_highlight
-    logs_replaced: Arc<Notify>,        // signaled by add_logs_line, awaited by MCP refresh_logs
+    publish_lock: Arc<Mutex<()>>,      // held while the log store is changed and the change emitted
 }
+```
+
+`publish_lock` is taken by every change of the log store together with its event (`publish_one`, `publish_append`, `publish_replace`, `insert_marker`, both `clear_logs`), so the window receives the changes in the order of the store. `refresh` relies on it to replace the log without losing the lines received meanwhile.
+
+```rust
 ```
 
 ### Tauri Commands
@@ -491,10 +496,13 @@ Folder of the log files when none is chosen, shown in the Config tab.
 #### `open_file(path)`
 Reads the file once and replaces the logs with its lines (`serial-datas` / `serial-datas-focus`), without timestamps. The file is decoded as UTF-8 (invalid bytes replaced with `U+FFFD`) and split like a [followed file](#file-follow-tail--f) (`\n` separator, trailing `\r` stripped, empty lines kept); the last line is kept even without a trailing newline. Sets the log store source to `file`. Returns an error if the file cannot be read.
 
-#### `add_logs_line(lines: Vec<String>, timestamps?: Vec<Option<u64>>, markers?: Vec<bool>)`
-Used by Refresh and Demo regenerate. `timestamps` gives the reception time of each line, used by Refresh to keep them; without it, lines have no timestamp. `markers` flags the lines that are markers, rebuilt as markers instead of being processed by the rules. Processes a batch of raw lines through `parse_log_line` and emits:
+#### `add_logs_line(lines: Vec<String>)`
+Used by Demo regenerate. Processes a batch of raw lines, without timestamps, through the highlight rules and emits:
 - `serial-datas` — all processed lines
 - `serial-datas-focus` — only lines that matched a focus rule
+
+#### `refresh_logs()`
+Used by Refresh and the MCP `refresh_logs` tool. Re-applies the current highlight rules to every line of the [log store](#log-store), which holds the lines shown, and emits `serial-datas` / `serial-datas-focus`. Lines keep their id, timestamp and marker flag. The lines are processed in parallel without `publish_lock`, so lines keep being received; then, under the lock, the lines published meanwhile are processed too and the result replaces the log.
 
 ### Highlight processing pipeline (`parse_log_line`)
 
@@ -603,7 +611,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 | Clear button / Ctrl+Shift+R (`clear_logs` command) | clear |
 | MCP `clear_logs` tool (then `logs-cleared`) | clear |
 
-- Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), and its `focus` / `removed` flags.
+- Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), its `focus` / `removed` flags, its timestamp and its marker flag. Refresh reprocesses the lines from here.
 - It is a ring buffer: past the capacity (default **500 000** lines, `KAZESERIAL_LOG_CAPACITY` to override), the oldest lines are evicted and counted as dropped.
 - It tracks the current source: `none`, `serial`, `file` (opened once with `open_file`) or `file_watch` (followed).
 - Records are in log order. Ids increase along the log, except for a marker inserted above a line, whose new id is larger than the ids around it; `wait_for_logs` and `wait_for_pattern` walk records in id order.
@@ -650,7 +658,7 @@ Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) 
 | `wait_for_pattern(after_id, pattern, is_regex=false, ignore_case=true, skip_occurrences=0, timeout_ms=15000)` | Blocks until a line with `id > after_id` matches, after skipping `skip_occurrences` matches; returns it with the new `last_id` |
 | `clear_logs` | Clears the store, resets the marker numbering, and emits `logs-cleared` so the window is cleared too |
 | `add_highlight(pattern, is_regex=false, case_sensitive=true, color="#cc7f12", focus=true, remove=false, whole_line=false, advanced_selections=[])` | Emits `mcp-add-highlight` and waits (10 s max) for the window's `set_highlights`; returns the rule. `advanced_selections` is a list of `{ groups: [1, 3], color? }`. Rejected: invalid regex or color, advanced without regex or with `whole_line`, unknown group |
-| `refresh_logs` | Emits `mcp-refresh-logs` and waits (10 s max) for the window's `add_logs_line`; returns the new line counts and ids (every line gets a new id) |
+| `refresh_logs` | Runs Refresh (`refresh_logs` command); returns the line counts and ids. Line ids are kept |
 
 Line ids are stable within a session and never reused. They give the order in which lines were added, which is the log order except for a [marker inserted above a line](#markers): `wait_for_logs` and `wait_for_pattern` walk lines in id order, so such a marker is reported once, as a new line, and `newest_id` is the largest id, not the id of the last line. The other tools return lines in log order.
 
@@ -668,7 +676,6 @@ Line ids are stable within a session and never reused. They give the order in wh
 | `file-watch-stopped` | *(empty)* | Emitted when the file follow loop exits (user stop or missing file). The frontend resets the Follow button. |
 | `logs-cleared` | *(empty)* | Emitted when an MCP client calls `clear_logs`. The frontend clears the main and focus logs so the window stays in sync. |
 | `mcp-add-highlight` | rule (`HighlightRule`, persisted rule shape) | Emitted by the MCP `add_highlight` tool. The Highlight tab appends the rule. |
-| `mcp-refresh-logs` | *(empty)* | Emitted by the MCP `refresh_logs` tool. The frontend runs Refresh. |
 | `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged) without auto-reconnect. The frontend listens to this event to reset the Connect button to its disconnected state. |
 | `serial-reconnecting` | *(empty)* | Emitted when the port is lost with auto-reconnect: the backend waits for it to come back. The Serial tab shows a waiting caption. |
 | `serial-reconnected` | `string` (port name) | Emitted when auto-reconnect reopened the port, possibly under another name. The Serial tab hides the waiting caption, selects that port and lists the ports again. |
@@ -751,7 +758,7 @@ Two separate commands handle different use cases:
 
 | Command | Frontend event | Frontend action |
 |---|---|---|
-| `add_logs_line` | `serial-datas` / `serial-datas-focus` | **Replaces** the full log array (used by refresh) |
+| `add_logs_line`, `refresh_logs` | `serial-datas` / `serial-datas-focus` | **Replaces** the full log array (used by demo regenerate and Refresh) |
 | `append_logs_line` | `serial-datas-append` / `serial-datas-focus-append` | **Appends** to the existing array (used by demo append and serial port) |
 
 This avoids resending thousands of existing lines to the backend just to append new ones.

@@ -33,6 +33,11 @@ pub struct LogRecord {
     pub focus: bool,
     /// Blanked by a `remove` rule — present here but hidden in the user's view.
     pub removed: bool,
+    /// Reception time in ms since the Unix epoch, `None` for a line of a loaded file. Kept so a
+    /// Refresh, which processes the lines again from here, keeps it.
+    pub timestamp: Option<u64>,
+    /// Marker line inserted by the user, kept as a marker by a Refresh.
+    pub marker: bool,
 }
 
 /// Where the currently displayed lines came from.
@@ -202,6 +207,11 @@ impl LogStore {
             capacity: inner.capacity,
             source: inner.source.clone(),
         }
+    }
+
+    /// `f` applied to every record, in display order.
+    pub async fn map_records<T>(&self, f: impl FnMut(&LogRecord) -> T) -> Vec<T> {
+        self.inner.read().await.records.iter().map(f).collect()
     }
 
     /// Last `count` records, oldest first.
@@ -472,6 +482,8 @@ mod tests {
             text: text.to_string(),
             focus: false,
             removed: false,
+            timestamp: None,
+            marker: false,
         }
     }
 

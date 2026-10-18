@@ -166,9 +166,9 @@ pub struct RefreshOutput {
     pub total_lines: usize,
     /// Lines matching a "focus" highlight rule after the refresh.
     pub focus_lines: usize,
-    /// New lowest id, `null` when empty. Every line got a new id.
+    /// Lowest id, `null` when empty.
     pub oldest_id: Option<u64>,
-    /// New highest id, `null` when empty. Use as the cursor for `wait_for_logs`.
+    /// Highest id, `null` when empty.
     pub newest_id: Option<u64>,
 }
 
@@ -714,9 +714,11 @@ impl KazeMcp {
                        unless they asked for a fresh capture."
     )]
     async fn clear_logs(&self) -> Json<ClearOutput> {
+        let state = self.app.state::<crate::AppState>();
+        let _publishing = state.publish_lock.lock().await;
         let stats = self.store.stats().await;
         self.store.clear().await;
-        self.app.state::<crate::AppState>().reset_markers();
+        state.reset_markers();
         // Keep the user's window in sync with what the agent just did.
         let _ = self.app.emit("logs-cleared", ());
         Json(ClearOutput {
@@ -759,22 +761,17 @@ impl KazeMcp {
         description = "Re-apply the current highlight rules to every line shown, like the \
                        user's Refresh button — e.g. right after add_highlight, so the new rule \
                        also colors and flags as focus the lines already captured. Returns once \
-                       the window is updated. Every line gets a new id: previous ids and \
-                       cursors are no longer valid, use the ids returned here."
+                       the window is updated. Line ids are kept, so ids and cursors stay valid."
     )]
-    async fn refresh_logs(&self) -> Result<Json<RefreshOutput>, ErrorData> {
-        // Only the window knows the reception time and marker flag of each line, so it runs
-        // the Refresh and sends the lines back to be reprocessed.
-        let state = self.app.state::<crate::AppState>();
-        self.ask_window("mcp-refresh-logs", (), &state.logs_replaced)
-            .await?;
+    async fn refresh_logs(&self) -> Json<RefreshOutput> {
+        crate::refresh(&self.app).await;
         let stats = self.store.stats().await;
-        Ok(Json(RefreshOutput {
+        Json(RefreshOutput {
             total_lines: stats.total_lines,
             focus_lines: stats.focus_lines,
             oldest_id: stats.oldest_id,
             newest_id: stats.newest_id,
-        }))
+        })
     }
 }
 
@@ -813,7 +810,7 @@ impl ServerHandler for KazeMcp {
                  can be tens of thousands of lines\n\
                  - add_highlight to add a highlight rule to the user's window, e.g. to make what \
                  you found stand out or to flag it as focus, then refresh_logs to apply it to the \
-                 lines already shown (this gives every line a new id)\n\n\
+                 lines already shown\n\n\
                  Line text is always raw, with no highlight markup. Ids are stable within a \
                  session; the buffer is a ring, so old lines can be evicted (dropped_lines in \
                  get_status says how many).",
