@@ -397,7 +397,7 @@ Default color for new rules: `#cc7f12`. New rules default to `is_regex: false`, 
 ```rust
 struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
-    highlights: Arc<Mutex<Vec<HighlightSettings>>>,
+    highlights: Arc<Mutex<Arc<Vec<HighlightSettings>>>>, // replaced as a whole, so each line only clones the Arc
     message_id_counter: Arc<AtomicU64>,
     marker_counter: Arc<AtomicU64>,    // number of the last marker inserted
     log_files: Arc<std::sync::Mutex<LogFiles>>, // automatic save of the serial log, see Log Files
@@ -742,7 +742,7 @@ Processing large batches (e.g. 10 000 lines) must complete in well under a secon
 
 ### 1. Single mutex acquisition per batch
 
-The highlight rules are protected by a mutex. Rather than locking it once per line, `add_logs_line` and `append_logs_line` lock it **once** for the entire batch, clone the rules, then release the lock before any processing begins. This eliminates thousands of async suspend/resume cycles.
+The highlight rules are protected by a mutex. Rather than locking it once per line, `add_logs_line` and `append_logs_line` lock it **once** for the entire batch, clone the `Arc` holding the rules (the rules themselves are not copied), then release the lock before any processing begins. Lines received one by one (serial port, system messages) also only clone the `Arc`. This eliminates thousands of async suspend/resume cycles.
 
 ### 2. Parallel line processing with rayon
 

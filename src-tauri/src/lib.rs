@@ -151,7 +151,8 @@ struct SerialPortEntry {
 #[derive(Clone)]
 struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
-    highlights: Arc<Mutex<Vec<HighlightSettings>>>,
+    /// Replaced as a whole by `set_highlights`, so each line only clones the `Arc`.
+    highlights: Arc<Mutex<Arc<Vec<HighlightSettings>>>>,
     message_id_counter: Arc<AtomicU64>,
     /// Number of the last marker inserted, so markers are numbered 1, 2, 3...
     marker_counter: Arc<AtomicU64>,
@@ -180,7 +181,7 @@ impl AppState {
     fn new() -> Self {
         Self {
             serial_connection: Arc::new(Mutex::new(None)),
-            highlights: Arc::new(Mutex::new(Vec::new())),
+            highlights: Default::default(),
             message_id_counter: Arc::new(AtomicU64::new(1)),
             marker_counter: Arc::new(AtomicU64::new(0)),
             // Default folder set in `setup`, once the paths are known
@@ -797,7 +798,7 @@ async fn set_highlights(
         .into_iter()
         .filter_map(build_highlight_settings)
         .collect();
-    *state.highlights.lock().await = hilights_settings;
+    *state.highlights.lock().await = Arc::new(hilights_settings);
     state.highlights_updated.notify_waiters();
     Ok(())
 }
@@ -1818,7 +1819,7 @@ mod refresh_tests {
             let state = handle.state::<AppState>();
             publish_append(&handle, process_batch(&handle, with_timestamp(vec!["a".into(), "b".into()], Some(7))).await).await;
             publish_one(&handle, state.next_marker(Some(8))).await;
-            *state.highlights.lock().await = vec![build_highlight_settings(HighlightMessage {
+            *state.highlights.lock().await = Arc::new(vec![build_highlight_settings(HighlightMessage {
                 id: 0,
                 text: "b".into(),
                 color: "R".into(),
@@ -1831,7 +1832,7 @@ mod refresh_tests {
                 focus: true,
                 remove: false,
             })
-            .unwrap()];
+            .unwrap()]);
 
             refresh(&handle).await;
 
