@@ -122,10 +122,7 @@ fn with_timestamp(lines: Vec<String>, timestamp: Option<u64>) -> Vec<(String, Op
 async fn emit_system_msg(app: &AppHandle<impl Runtime>, msg: String) {
     let timestamp = now_ms();
     let raw = format!("[{}] KazeSerial: {}", log_file::format_timestamp(timestamp, "HH:mm:ss"), msg);
-    let state = app.state::<AppState>();
-    let message_id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
-    let highlights = state.highlights.lock().await.clone();
-    let payload = process_line(raw, &highlights, message_id, Some(timestamp));
+    let payload = process_one(app, raw, Some(timestamp)).await;
     publish_one(app, payload).await;
 }
 
@@ -589,10 +586,12 @@ fn process_line(
     }
 }
 
-async fn parse_log_line(input_line: String, emitter: tauri::AppHandle) -> Payload {
-    let highlights_vec = emitter.state::<AppState>().highlights.lock().await.clone();
-    let message_id = emitter.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
-    process_line(input_line, &highlights_vec, message_id, Some(now_ms()))
+/// Processes a single line received at `timestamp` through the current highlight rules.
+async fn process_one(app: &AppHandle<impl Runtime>, line: String, timestamp: Option<u64>) -> Payload {
+    let state = app.state::<AppState>();
+    let highlights = state.highlights.lock().await.clone();
+    let message_id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
+    process_line(line, &highlights, message_id, timestamp)
 }
 
 /// Replaces the whole log with generated `lines` (demo), which have no reception time.
@@ -889,7 +888,7 @@ async fn open_port(
                                 }
                                 if let Some(line) = splitter.push(temp[0]) {
                                     let line = String::from_utf8_lossy(&line).to_string();
-                                    let cur_payload = parse_log_line(line, app_handle.clone()).await;
+                                    let cur_payload = process_one(&app_handle, line, Some(now_ms())).await;
                                     publish_one(&app_handle, cur_payload).await;
                                 }
                             }
@@ -1188,6 +1187,16 @@ struct McpStatus {
     port: Option<u16>,
 }
 
+impl McpStatus {
+    fn of(server: Option<&mcp::McpServerHandle>) -> Self {
+        Self {
+            running: server.is_some(),
+            url: server.map(|server| server.url()),
+            port: server.map(|server| server.addr.port()),
+        }
+    }
+}
+
 /// Starts the MCP server on loopback unless one is already running, in which case the
 /// existing one is reported as-is rather than rebound. `port` 0 picks a free port.
 async fn ensure_mcp_server(app: &tauri::AppHandle, port: u16) -> Result<McpStatus, String> {
@@ -1195,11 +1204,7 @@ async fn ensure_mcp_server(app: &tauri::AppHandle, port: u16) -> Result<McpStatu
     let mut slot = state.mcp_server.lock().await;
 
     if let Some(existing) = slot.as_ref() {
-        return Ok(McpStatus {
-            running: true,
-            url: Some(existing.url()),
-            port: Some(existing.addr.port()),
-        });
+        return Ok(McpStatus::of(Some(existing)));
     }
 
     let handle = mcp::start(
@@ -1211,11 +1216,7 @@ async fn ensure_mcp_server(app: &tauri::AppHandle, port: u16) -> Result<McpStatu
     )
     .await?;
 
-    let status = McpStatus {
-        running: true,
-        url: Some(handle.url()),
-        port: Some(handle.addr.port()),
-    };
+    let status = McpStatus::of(Some(&handle));
     let url = handle.url();
     *slot = Some(handle);
     // Released before emitting: emit_system_msg records into the log store, and
@@ -1240,29 +1241,14 @@ async fn stop_mcp_server(
         handle.stop();
         emit_system_msg(&app, "MCP server stopped".to_string()).await;
     }
-    Ok(McpStatus {
-        running: false,
-        url: None,
-        port: None,
-    })
+    Ok(McpStatus::of(None))
 }
 
 #[tauri::command]
 async fn get_mcp_status(state: tauri::State<'_, AppState>) -> Result<McpStatus, String> {
-    let slot = state.mcp_server.lock().await;
-    Ok(match slot.as_ref() {
-        Some(handle) => McpStatus {
-            running: true,
-            url: Some(handle.url()),
-            port: Some(handle.addr.port()),
-        },
-        None => McpStatus {
-            running: false,
-            url: None,
-            port: None,
-        },
-    })
+    Ok(McpStatus::of(state.mcp_server.lock().await.as_ref()))
 }
+
 fn create_config_dir(app: &mut tauri::App) {
     match fs::create_dir_all(app.path().app_config_dir().unwrap()) {
         Ok(_) => {}

@@ -12,6 +12,7 @@ import Divider from '@mui/material/Divider';
 import McpSettings from './McpSettings';
 import ColorPickerButton from './ColorPickerButton';
 import Tooltip from '@mui/material/Tooltip';
+import type { SxProps, Theme } from '@mui/material/styles';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { AppConfig } from '../types/AppConfig';
@@ -58,12 +59,24 @@ const IntegerField: React.FC<IntegerFieldProps> = ({ label, value, disabled, min
   );
 };
 
+// Settings that are on or off
+type BooleanSetting = { [K in keyof AppConfig]: AppConfig[K] extends boolean ? K : never }[keyof AppConfig];
+
 interface ConfigSettingsProps {
   config: AppConfig;
   onConfigChange: (changes: Partial<AppConfig>) => void;
 }
 
 const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange }) => {
+  // Checkbox of an on / off setting
+  const checkbox = (label: string, setting: BooleanSetting, props?: { disabled?: boolean; sx?: SxProps<Theme> }) => (
+    <FormControlLabel
+      label={label}
+      {...props}
+      control={<Checkbox size="small" checked={config[setting]} onChange={(e) => onConfigChange({ [setting]: e.target.checked })} />}
+    />
+  );
+
   // "Custom" stays selected while editing, even if the typed pattern matches a preset
   const [customFormat, setCustomFormat] = useState(false);
   const isCustomFormat = customFormat || !TIMESTAMP_FORMATS.includes(config.timestampFormat);
@@ -91,60 +104,12 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-      <FormControlLabel
-        label="Show line numbers"
-        control={
-          <Checkbox
-            size="small"
-            checked={config.showLineNumbers}
-            onChange={(e) => onConfigChange({ showLineNumbers: e.target.checked })}
-          />
-        }
-      />
-      <FormControlLabel
-        label="Show minimap"
-        control={
-          <Checkbox
-            size="small"
-            checked={config.showMinimap}
-            onChange={(e) => onConfigChange({ showMinimap: e.target.checked })}
-          />
-        }
-      />
-      <FormControlLabel
-        label="Show timestamps"
-        control={
-          <Checkbox
-            size="small"
-            checked={config.showTimestamps}
-            onChange={(e) => onConfigChange({ showTimestamps: e.target.checked })}
-          />
-        }
-      />
-      <FormControlLabel
-        label="Include timestamps in copied and saved text"
-        disabled={!config.showTimestamps}
-        sx={{ pl: 3 }}
-        control={
-          <Checkbox
-            size="small"
-            checked={config.timestampsInText}
-            onChange={(e) => onConfigChange({ timestampsInText: e.target.checked })}
-          />
-        }
-      />
+      {checkbox('Show line numbers', 'showLineNumbers')}
+      {checkbox('Show minimap', 'showMinimap')}
+      {checkbox('Show timestamps', 'showTimestamps')}
+      {checkbox('Include timestamps in copied and saved text', 'timestampsInText', { disabled: !config.showTimestamps, sx: { pl: 3 } })}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 3 }}>
-        <FormControlLabel
-          label="Only after inactivity"
-          disabled={!config.showTimestamps}
-          control={
-            <Checkbox
-              size="small"
-              checked={config.timestampsAfterInactivityOnly}
-              onChange={(e) => onConfigChange({ timestampsAfterInactivityOnly: e.target.checked })}
-            />
-          }
-        />
+        {checkbox('Only after inactivity', 'timestampsAfterInactivityOnly', { disabled: !config.showTimestamps })}
         <IntegerField
           label="Delay (ms)"
           value={config.timestampInactivityMs}
@@ -180,16 +145,7 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
         )}
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pt: 1 }}>
-        <FormControlLabel
-          label="Highlight new lines"
-          control={
-            <Checkbox
-              size="small"
-              checked={config.highlightNewLines}
-              onChange={(e) => onConfigChange({ highlightNewLines: e.target.checked })}
-            />
-          }
-        />
+        {checkbox('Highlight new lines', 'highlightNewLines')}
         <IntegerField
           label="Duration (ms)"
           value={config.newLineHighlightMs}
@@ -208,28 +164,9 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           </span>
         </Tooltip>
       </Box>
-      <FormControlLabel
-        label="Auto-reconnect serial port"
-        sx={{ pt: 1 }}
-        control={
-          <Checkbox
-            size="small"
-            checked={config.autoReconnect}
-            onChange={(e) => onConfigChange({ autoReconnect: e.target.checked })}
-          />
-        }
-      />
+      {checkbox('Auto-reconnect serial port', 'autoReconnect', { sx: { pt: 1 } })}
       <Divider sx={{ my: 2 }} />
-      <FormControlLabel
-        label="Save logs to files"
-        control={
-          <Checkbox
-            size="small"
-            checked={config.logFileEnabled}
-            onChange={(e) => onConfigChange({ logFileEnabled: e.target.checked })}
-          />
-        }
-      />
+      {checkbox('Save logs to files', 'logFileEnabled')}
       <Typography variant="caption" sx={{ pl: 4, pb: 1, color: 'text.secondary' }}>
         Lines received from the serial port, system messages and markers, as Save writes them. A new file on each connection.
       </Typography>
@@ -254,18 +191,7 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           </Tooltip>
         )}
       </Box>
-      <FormControlLabel
-        label="Rotate files"
-        disabled={!config.logFileEnabled}
-        sx={{ pl: 3, pt: 1 }}
-        control={
-          <Checkbox
-            size="small"
-            checked={config.logFileRotation}
-            onChange={(e) => onConfigChange({ logFileRotation: e.target.checked })}
-          />
-        }
-      />
+      {checkbox('Rotate files', 'logFileRotation', { disabled: !config.logFileEnabled, sx: { pl: 3, pt: 1 } })}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 6, pt: 1 }}>
         <IntegerField
           label="Max files"
