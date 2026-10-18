@@ -402,6 +402,7 @@ struct AppState {
     marker_counter: Arc<AtomicU64>,    // number of the last marker inserted
     log_files: Arc<std::sync::Mutex<LogFiles>>, // automatic save of the serial log, see Log Files
     file_watch_active: Arc<AtomicBool>,
+    file_watch_session: Arc<AtomicU64>, // incremented by every Follow / Stop, stops replaced follow loops
     log_store: Arc<LogStore>,          // copy of every emitted line, served by MCP
     serial_connected: Arc<AtomicBool>, // lock-free mirror of serial_connection.is_some()
     serial_session: Arc<AtomicU64>,    // incremented by every open / close, stops stale reconnection loops
@@ -454,10 +455,10 @@ Compiles and stores highlight rules. Validates regexes (invalid rules are skippe
 Clears the [log store](#log-store) and resets the marker numbering. Called when the user clears the main log (Clear button or Ctrl+Shift+R). Unlike the MCP `clear_logs` tool, it does not emit `logs-cleared`, so the focus panel is left as the user chose.
 
 #### `watch_file(path)`
-Stops any running file follow, reads the file, replaces the logs with its lines, then spawns the follow loop described in [File Follow](#file-follow-tail--f). Returns an error if the file cannot be read.
+Stops any running file follow, reads the file, replaces the logs with its lines, then spawns the follow loop described in [File Follow](#file-follow-tail--f). Returns an error if the file cannot be read. Each Follow starts a new session (`file_watch_session`): a loop whose session was replaced exits at its next check, without emitting `file-watch-stopped`, so a single loop ever follows a file.
 
 #### `stop_file_watch()`
-Asks the follow loop to stop. It exits within 200 ms and emits `file-watch-stopped`.
+Ends the follow session. The loop exits within 200 ms and emits `file-watch-stopped`.
 
 #### `start_mcp_server(port?) -> McpStatus`
 Starts the [MCP server](#mcp-server) on `127.0.0.1:port` (default `9339`; `0` lets the OS pick a free port). Does nothing if it is already running. Emits the system message `MCP server listening on {url}`.

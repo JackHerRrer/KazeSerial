@@ -144,6 +144,9 @@ struct AppState {
     /// Automatic save of the serial log to files
     log_files: Arc<std::sync::Mutex<LogFiles>>,
     file_watch_active: Arc<AtomicBool>,
+    /// Incremented by every Follow / Stop of a file, so a follow loop stops when its session has
+    /// been replaced or stopped.
+    file_watch_session: Arc<AtomicU64>,
     /// Every emitted line is recorded here so the MCP server can serve the same
     /// log the user sees. The webview state is no longer the only copy.
     log_store: Arc<LogStore>,
@@ -172,6 +175,7 @@ impl AppState {
             // Default folder set in `setup`, once the paths are known
             log_files: Arc::new(std::sync::Mutex::new(LogFiles::new(std::path::PathBuf::new()))),
             file_watch_active: Arc::new(AtomicBool::new(false)),
+            file_watch_session: Arc::new(AtomicU64::new(0)),
             log_store: Arc::new(LogStore::new()),
             serial_connected: Arc::new(AtomicBool::new(false)),
             serial_session: Arc::new(AtomicU64::new(0)),
@@ -1092,18 +1096,23 @@ async fn open_file(
 }
 
 #[tauri::command]
-async fn watch_file(
-    path: String,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    // Signal any existing watcher to stop, then re-arm
-    state.file_watch_active.store(false, Ordering::SeqCst);
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    state.file_watch_active.store(true, Ordering::SeqCst);
+async fn watch_file(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    follow_file(&app, path).await
+}
+
+/// Replaces the logs with the lines of the file at `path`, then appends the lines added to it,
+/// until Stop or another Follow.
+async fn follow_file(app: &AppHandle<impl Runtime>, path: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    // Stops the file currently followed, if any
+    let session = state.file_watch_session.fetch_add(1, Ordering::SeqCst) + 1;
 
     // Read initial content and track the byte position actually consumed
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| {
+        state.file_watch_active.store(false, Ordering::SeqCst);
+        e.to_string()
+    })?;
+    state.file_watch_active.store(true, Ordering::SeqCst);
     let (content, consumed) = decode_utf8(&bytes);
     let mut splitter = TailSplitter::default();
     let lines = splitter.feed(&content);
@@ -1114,10 +1123,9 @@ async fn watch_file(
         .await;
 
     // Emit initial batch (replaces current logs); its reception time is unknown
-    let results = process_batch(&app, with_timestamp(lines, None)).await;
-    publish_replace(&app, results).await;
+    let results = process_batch(app, with_timestamp(lines, None)).await;
+    publish_replace(app, results).await;
 
-    let active = state.file_watch_active.clone();
     let app_handle = app.clone();
 
     tokio::spawn(async move {
@@ -1126,7 +1134,7 @@ async fn watch_file(
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-            if !active.load(Ordering::SeqCst) {
+            if app_handle.state::<AppState>().file_watch_session.load(Ordering::SeqCst) != session {
                 break;
             }
 
@@ -1161,11 +1169,13 @@ async fn watch_file(
             }
         }
 
-        app_handle
-            .state::<AppState>()
-            .log_store
-            .clear_source_if_watching(&path)
-            .await;
+        let state = app_handle.state::<AppState>();
+        // Replaced by another Follow, which reports its own state
+        if state.file_watch_session.load(Ordering::SeqCst) != session && state.file_watch_active.load(Ordering::SeqCst) {
+            return;
+        }
+        state.file_watch_active.store(false, Ordering::SeqCst);
+        state.log_store.clear_source_if_watching(&path).await;
         let _ = app_handle.emit("file-watch-stopped", ());
     });
 
@@ -1174,6 +1184,7 @@ async fn watch_file(
 
 #[tauri::command]
 async fn stop_file_watch(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.file_watch_session.fetch_add(1, Ordering::SeqCst);
     state.file_watch_active.store(false, Ordering::SeqCst);
     Ok(())
 }
@@ -1718,20 +1729,21 @@ mod process_line_tests {
     }
 }
 
+/// Application with the state of KazeSerial on the mock runtime, for the tests of the commands.
 #[cfg(test)]
-mod refresh_tests {
+mod test_app {
     use super::*;
     use tauri::Listener;
 
     /// Ids of the main log list, updated from the events as `page.tsx` does.
-    type Window = Arc<std::sync::Mutex<Vec<u64>>>;
+    pub type Window = Arc<std::sync::Mutex<Vec<u64>>>;
 
     fn ids_of(payload: &str) -> Vec<u64> {
         let lines: Vec<serde_json::Value> = serde_json::from_str(payload).unwrap();
         lines.iter().map(|line| line["id"].as_u64().unwrap()).collect()
     }
 
-    fn app_with_window() -> (tauri::App<tauri::test::MockRuntime>, Window) {
+    pub fn app_with_window() -> (tauri::App<tauri::test::MockRuntime>, Window) {
         let app = tauri::test::mock_app();
         app.manage(AppState::new());
         let window: Window = Default::default();
@@ -1746,6 +1758,12 @@ mod refresh_tests {
         app.listen_any("serial-datas", move |event| *list.lock().unwrap() = ids_of(event.payload()));
         (app, window)
     }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    use test_app::app_with_window;
 
     #[test]
     fn lines_received_during_a_refresh_are_kept_once() {
@@ -1840,5 +1858,54 @@ mod system_message_tests {
         let timestamp = payload["timestamp"].as_i64().unwrap();
         let local = chrono::Local.timestamp_millis_opt(timestamp).unwrap();
         assert_eq!(payload["message"], local.format("[%H:%M:%S] KazeSerial: hello").to_string());
+    }
+}
+
+#[cfg(test)]
+mod file_watch_tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::atomic::AtomicUsize;
+    use tauri::Listener;
+    use test_app::app_with_window;
+
+    fn texts(app: &AppHandle<impl Runtime>) -> Vec<String> {
+        tauri::async_runtime::block_on(app.state::<AppState>().log_store.map_records(|r| r.text.clone()))
+    }
+
+    #[test]
+    fn following_again_replaces_the_previous_watcher() {
+        let (app, window) = app_with_window();
+        let handle = app.handle().clone();
+        let stopped = Arc::new(AtomicUsize::new(0));
+        let count = stopped.clone();
+        app.listen_any("file-watch-stopped", move |_| { count.fetch_add(1, Ordering::SeqCst); });
+        let path = std::env::temp_dir().join(format!("kazeserial_follow_{}.log", std::process::id()));
+        std::fs::write(&path, "a\n").unwrap();
+        let name = path.to_string_lossy().to_string();
+
+        tauri::async_runtime::block_on(async {
+            follow_file(&handle, name.clone()).await.unwrap();
+            follow_file(&handle, name.clone()).await.unwrap();
+            std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"b\n").unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        });
+
+        assert_eq!(texts(&handle), vec!["a", "b"], "the new line is followed once");
+        assert_eq!(window.lock().unwrap().len(), 2);
+        assert_eq!(stopped.load(Ordering::SeqCst), 0, "the replaced watcher does not report a stop");
+        assert!(handle.state::<AppState>().file_watch_active.load(Ordering::SeqCst));
+
+        // Stop: reported once, and nothing is followed anymore
+        tauri::async_runtime::block_on(async {
+            stop_file_watch(handle.state::<AppState>()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"c\n").unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        });
+        assert_eq!(stopped.load(Ordering::SeqCst), 1);
+        assert_eq!(texts(&handle), vec!["a", "b"]);
+        assert!(!handle.state::<AppState>().file_watch_active.load(Ordering::SeqCst));
+        let _ = std::fs::remove_file(&path);
     }
 }
