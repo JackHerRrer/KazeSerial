@@ -105,7 +105,8 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   const updateHoveredRow = () => {
     const box = boxRef.current;
     const pointer = pointerRef.current;
-    const listRect = listApiRef.current?.element?.getBoundingClientRect();
+    // Measured only while the pointer is over the terminal: it forces the browser to compute the layout
+    const listRect = pointer ? listApiRef.current?.element?.getBoundingClientRect() : undefined;
     let next: { id: number; top: number } | null = null;
     // Not over the minimap, on the right of the list
     if (box && pointer && (!listRect || pointer.x < listRect.right)) {
