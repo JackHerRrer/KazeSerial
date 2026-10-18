@@ -82,4 +82,5 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ config, onConfigChange }) =
   );
 };
 
-export default ControlPanel;
+// Memoized: the main page renders with every new log line, the settings only change on user input
+export default React.memo(ControlPanel);
