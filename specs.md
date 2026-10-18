@@ -423,7 +423,7 @@ struct AppState {
 Returns available serial ports. For USB ports, the label is `manufacturer + product`; for others, a generic string. Returns `{ portName, deviceLabel }`.
 
 #### `open_port(port_name, port_description?, baud_rate, auto_reconnect?)`
-Opens the serial port and spawns a Tokio task that reads byte by byte, assembles lines (splitting on `\r\n`, `\n\r`, `\r`, or `\n`), and processes each line through `parse_log_line`. Non-ASCII bytes are emitted as hex strings (e.g. `0x1f `). Processed lines are emitted as `serial-data` events.
+Opens the serial port and spawns a Tokio task that reads what has arrived, up to 4 KiB at a time (the blocking read runs in `block_in_place`, with a 200 ms timeout, which is also how long a Disconnect may wait), assembles lines (splitting on `\r\n`, `\n\r`, `\r`, or `\n`), and processes each line through `process_one`. Non-ASCII bytes are emitted as hex strings (e.g. `0xe9 `). Processed lines are emitted as `serial-data` events.
 
 On success, starts a new [log file](#log-files) session, then emits a system message: `[HH:MM:SS] KazeSerial: Connection to {port} ({description}) established`.
 On failure, emits a system message: `[HH:MM:SS] KazeSerial: Connection failed: {error}` and returns an error.

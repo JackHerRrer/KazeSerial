@@ -819,19 +819,34 @@ async fn list_ports() -> Result<Vec<SerialPortEntry>, String> {
     }
 }
 
+/// How long a read of the serial port waits for data. The port stays locked meanwhile, so it is
+/// also how long a Disconnect may wait.
+const SERIAL_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+
 #[tauri::command]
 async fn open_port(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
     port_name: String,
     port_description: Option<String>,
     baud_rate: u32,
     // When the port is lost, wait for it to come back and reopen it instead of disconnecting
     auto_reconnect: Option<bool>,
 ) -> Result<(), String> {
-    let auto_reconnect = auto_reconnect.unwrap_or(false);
+    connect(&app, port_name, port_description, baud_rate, auto_reconnect.unwrap_or(false)).await
+}
+
+/// Opens the serial port and spawns the loop that reads it until Disconnect, publishing a line
+/// for each line received and for each non-ASCII byte (as its hex value).
+async fn connect(
+    app: &AppHandle<impl Runtime>,
+    port_name: String,
+    port_description: Option<String>,
+    baud_rate: u32,
+    auto_reconnect: bool,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let session = state.serial_session.fetch_add(1, Ordering::SeqCst) + 1;
-    match serialport::new(&port_name, baud_rate).open() {
+    match serialport::new(&port_name, baud_rate).timeout(SERIAL_READ_TIMEOUT).open() {
         Ok(port) => {
             *state.serial_connection.lock().await = Some(port);
             state.serial_connected.store(true, Ordering::SeqCst);
@@ -850,7 +865,7 @@ async fn open_port(
                 .await;
             let desc = port_description.unwrap_or_default();
             emit_system_msg(
-                &app,
+                app,
                 format!("Connection to {} ({}) established", port_name, desc),
             ).await;
             let serial = state.serial_connection.clone();
@@ -863,26 +878,26 @@ async fn open_port(
                 .and_then(|(_, identity)| identity);
             tokio::spawn(async move {
                 let mut splitter = SerialSplitter::default();
+                let mut buffer = [0u8; 4096];
                 loop {
                     let mut lock = serial.lock().await;
-
-                    if let Some(ref mut port) = *lock {
-                        let mut temp = [0u8; 1];
-                        if let Err(e) = port.set_timeout(std::time::Duration::from_millis(1000)) {
-                            println!("Failed to set timeout: {}", e);
-                        }
-                        match port.read(&mut temp) {
-                            Ok(1) => {
-                                if !temp[0].is_ascii() {
+                    let Some(port) = lock.as_mut() else {
+                        break;
+                    };
+                    // Blocks until data arrives or the timeout: tokio moves its other tasks off
+                    // this thread meanwhile
+                    match tokio::task::block_in_place(|| port.read(&mut buffer)) {
+                        Ok(count) => {
+                            for &byte in &buffer[..count] {
+                                if !byte.is_ascii() {
                                     let message_id = app_handle.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
-                                    let test = format!("{:#04x} ", temp[0]);
                                     publish_one(
                                         &app_handle,
                                         Payload {
-                                            id:message_id,
-                                            message: test,
+                                            id: message_id,
+                                            message: format!("{:#04x} ", byte),
                                             matched: false,
-                                            rawline:None,
+                                            rawline: None,
                                             removed_line: false,
                                             timestamp: Some(now_ms()),
                                             marker: false,
@@ -890,73 +905,68 @@ async fn open_port(
                                     ).await;
                                     continue;
                                 }
-                                if let Some(line) = splitter.push(temp[0]) {
+                                if let Some(line) = splitter.push(byte) {
                                     let line = String::from_utf8_lossy(&line).to_string();
                                     let cur_payload = process_one(&app_handle, line, Some(now_ms())).await;
                                     publish_one(&app_handle, cur_payload).await;
                                 }
                             }
-                            Ok(_) => {}
-                            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                                std::thread::sleep(std::time::Duration::from_millis(2));
-                            }
-                            Err(_) => {
-                                app_handle
-                                    .state::<AppState>()
-                                    .serial_connected
-                                    .store(false, Ordering::SeqCst);
-                                if !auto_reconnect {
-                                    emit_system_msg(
-                                        &app_handle,
-                                        format!("Connection to {} lost", port_name_loop),
-                                    ).await;
-                                    let _ = app_handle.emit("serial-disconnected", ());
-                                    break;
-                                }
-                                // Release the dead port, then wait for the device to come back
-                                *lock = None;
-                                drop(lock);
-                                splitter = SerialSplitter::default();
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                        Err(_) => {
+                            app_handle
+                                .state::<AppState>()
+                                .serial_connected
+                                .store(false, Ordering::SeqCst);
+                            if !auto_reconnect {
                                 emit_system_msg(
                                     &app_handle,
-                                    format!("Connection to {} lost, waiting for it to come back", port_name_loop),
+                                    format!("Connection to {} lost", port_name_loop),
                                 ).await;
-                                let _ = app_handle.emit("serial-reconnecting", ());
-                                let Some(new_name) =
-                                    wait_for_port(&app_handle, &port_name_loop, identity.as_ref(), baud_rate, session).await
-                                else {
-                                    break;
-                                };
-                                if new_name == port_name_loop {
-                                    emit_system_msg(
-                                        &app_handle,
-                                        format!("Connection to {} re-established", port_name_loop),
-                                    ).await;
-                                } else {
-                                    emit_system_msg(
-                                        &app_handle,
-                                        format!("Connection to {} re-established as {}", port_name_loop, new_name),
-                                    ).await;
-                                    app_handle
-                                        .state::<AppState>()
-                                        .log_store
-                                        .set_source(LogSource::Serial { port: new_name.clone(), baud_rate })
-                                        .await;
-                                    port_name_loop = new_name;
-                                }
-                                // Carries the port name, so the Serial tab selects it if it changed
-                                let _ = app_handle.emit("serial-reconnected", port_name_loop.clone());
+                                let _ = app_handle.emit("serial-disconnected", ());
+                                break;
                             }
+                            // Release the dead port, then wait for the device to come back
+                            *lock = None;
+                            drop(lock);
+                            splitter = SerialSplitter::default();
+                            emit_system_msg(
+                                &app_handle,
+                                format!("Connection to {} lost, waiting for it to come back", port_name_loop),
+                            ).await;
+                            let _ = app_handle.emit("serial-reconnecting", ());
+                            let Some(new_name) =
+                                wait_for_port(&app_handle, &port_name_loop, identity.as_ref(), baud_rate, session).await
+                            else {
+                                break;
+                            };
+                            if new_name == port_name_loop {
+                                emit_system_msg(
+                                    &app_handle,
+                                    format!("Connection to {} re-established", port_name_loop),
+                                ).await;
+                            } else {
+                                emit_system_msg(
+                                    &app_handle,
+                                    format!("Connection to {} re-established as {}", port_name_loop, new_name),
+                                ).await;
+                                app_handle
+                                    .state::<AppState>()
+                                    .log_store
+                                    .set_source(LogSource::Serial { port: new_name.clone(), baud_rate })
+                                    .await;
+                                port_name_loop = new_name;
+                            }
+                            // Carries the port name, so the Serial tab selects it if it changed
+                            let _ = app_handle.emit("serial-reconnected", port_name_loop.clone());
                         }
-                    } else {
-                        break;
                     }
                 }
             });
             Ok(())
         }
         Err(e) => {
-            emit_system_msg(&app, format!("Connection failed: {}", e)).await;
+            emit_system_msg(app, format!("Connection failed: {}", e)).await;
             Err(format!("Failed to open port: {}", e))
         }
     }
@@ -1027,7 +1037,7 @@ fn find_reconnect_port(
 /// when it has one. Returns the name it was reopened under, or `None` if the session was closed or
 /// replaced meanwhile (Disconnect, or a new Connect).
 async fn wait_for_port(
-    app: &tauri::AppHandle,
+    app: &AppHandle<impl Runtime>,
     port_name: &str,
     identity: Option<&UsbIdentity>,
     baud_rate: u32,
@@ -1042,7 +1052,7 @@ async fn wait_for_port(
         let Some(name) = find_reconnect_port(port_name, identity, &available_port_identities()) else {
             continue;
         };
-        if let Ok(port) = serialport::new(&name, baud_rate).open() {
+        if let Ok(port) = serialport::new(&name, baud_rate).timeout(SERIAL_READ_TIMEOUT).open() {
             let mut connection = state.serial_connection.lock().await;
             // Checked again under the lock: a Disconnect may have happened while opening
             if state.serial_session.load(Ordering::SeqCst) != session {
@@ -1907,5 +1917,88 @@ mod file_watch_tests {
         assert_eq!(texts(&handle), vec!["a", "b"]);
         assert!(!handle.state::<AppState>().file_watch_active.load(Ordering::SeqCst));
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod serial_tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    use test_app::app_with_window;
+
+    /// Pseudo-terminal standing for a device: bytes written to the master side are received by
+    /// the port opened under `name`.
+    fn device() -> (serialport::TTYPort, serialport::TTYPort, String) {
+        let (mut master, slave) = serialport::TTYPort::pair().expect("a pseudo-terminal");
+        master.set_timeout(Duration::from_secs(10)).unwrap();
+        let name = slave.name().expect("the pseudo-terminal name");
+        (master, slave, name)
+    }
+
+    fn texts(app: &AppHandle<impl Runtime>) -> Vec<String> {
+        tauri::async_runtime::block_on(app.state::<AppState>().log_store.map_records(|r| r.text.clone()))
+    }
+
+    fn wait_for_records(app: &AppHandle<impl Runtime>, count: usize, timeout: Duration) {
+        let start = Instant::now();
+        while texts(app).len() < count && start.elapsed() < timeout {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn disconnect(app: &AppHandle<impl Runtime>) {
+        let state = app.state::<AppState>();
+        state.serial_session.fetch_add(1, Ordering::SeqCst);
+        tauri::async_runtime::block_on(async { *state.serial_connection.lock().await = None });
+    }
+
+    #[test]
+    fn lines_and_non_ascii_bytes_are_published() {
+        let (app, window) = app_with_window();
+        let handle = app.handle().clone();
+        let (mut master, _slave, name) = device();
+        tauri::async_runtime::block_on(connect(&handle, name, None, 115_200, false)).unwrap();
+
+        master.write_all(b"first\r\nsecond\xe9\nthi").unwrap();
+        master.write_all(b"rd\r\n").unwrap();
+        wait_for_records(&handle, 5, Duration::from_secs(5));
+
+        let received = texts(&handle);
+        assert!(received[0].ends_with("established"), "{:?}", received[0]);
+        assert_eq!(received[1..], ["first", "0xe9 ", "second", "third"]);
+        assert_eq!(window.lock().unwrap().len(), 5);
+
+        // Disconnect: the read loop releases the port within its read timeout
+        disconnect(&handle);
+        std::thread::sleep(SERIAL_READ_TIMEOUT * 2);
+        master.write_all(b"after\n").unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(texts(&handle).len(), 5);
+    }
+
+    /// Lines per second received from the serial port, run with
+    /// `cargo test --release serial_throughput -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn serial_throughput() {
+        let (app, _window) = app_with_window();
+        let handle = app.handle().clone();
+        let (mut master, _slave, name) = device();
+        tauri::async_runtime::block_on(connect(&handle, name, None, 921_600, false)).unwrap();
+        let lines = 20_000;
+        let writer = std::thread::spawn(move || {
+            for i in 0..lines {
+                master.write_all(format!("[{i:08}] INFO: received packet len=42 flags=0x1f ok\r\n").as_bytes()).unwrap();
+            }
+            master
+        });
+        let start = Instant::now();
+        wait_for_records(&handle, lines + 1, Duration::from_secs(120));
+        let elapsed = start.elapsed();
+        let _master = writer.join().unwrap();
+        assert_eq!(texts(&handle).len(), lines + 1);
+        println!("{} lines in {:.2} s: {:.0} lines/s", lines, elapsed.as_secs_f64(), lines as f64 / elapsed.as_secs_f64());
+        disconnect(&handle);
     }
 }
