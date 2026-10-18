@@ -69,14 +69,11 @@ interface PersistedHighlightConfig {
 }
 
 interface HighlightMessagePayload {
-    id: number;
     text: string;
     color: string;
     is_regex: boolean;
     case_sensitive: boolean;
     select_mode: HighlightSelectMode;
-    custom_select: string;
-    whole_line: boolean;
     focus: boolean;
     remove: boolean;
     advanced_selections?: Array<{
@@ -163,51 +160,23 @@ const createDefaultHighlight = (): HighligtConfig => ({
     remove: false,
 });
 
-const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePayload[] => {
-    const payload: HighlightMessagePayload[] = [];
-
-    highlights.forEach((highlight) => {
-        if (highlight.advanced && highlight.is_regex) {
-            const advancedSelectionsPayload =
-                highlight.advanced_selections.length > 0
-                    ? highlight.advanced_selections
-                    : [{ id: highlight.id, color: highlight.color, selector: '' }];
-
-            payload.push({
-                id: highlight.id,
-                text: highlight.text,
-                color: highlight.color,
-                is_regex: highlight.is_regex,
-                case_sensitive: highlight.case_sensitive,
-                select_mode: 'custom',
-                custom_select: '',
-                whole_line: false,
-                focus: highlight.focus,
-                remove: highlight.remove,
-                advanced_selections: advancedSelectionsPayload.map((selection) => ({
-                    color: selection.color,
-                    custom_select: selection.selector,
-                })),
-            });
-            return;
-        }
-
-        payload.push({
-            id: highlight.id,
+const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePayload[] =>
+    highlights.map((highlight) => {
+        // Without any group selected, the backend colors the whole matches
+        const isAdvanced = highlight.advanced && highlight.is_regex;
+        return {
             text: highlight.text,
             color: highlight.color,
             is_regex: highlight.is_regex,
             case_sensitive: highlight.case_sensitive,
-            select_mode: highlight.whole_line ? 'whole_line' : 'match',
-            custom_select: '',
-            whole_line: highlight.whole_line,
+            select_mode: isAdvanced ? 'custom' : highlight.whole_line ? 'whole_line' : 'match',
             focus: highlight.focus,
             remove: highlight.remove,
-        });
+            advanced_selections: isAdvanced
+                ? highlight.advanced_selections.map((selection) => ({ color: selection.color, custom_select: selection.selector }))
+                : undefined,
+        };
     });
-
-    return payload;
-};
 
 
 export function useCustomHilightsState(): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {

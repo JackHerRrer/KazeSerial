@@ -53,7 +53,6 @@ struct ColoredSpan<'a> {
 
 #[derive(Clone, serde::Deserialize)]
 struct HighlightMessage {
-    id: u64,
     text: String,
     color: String,
     is_regex: bool,
@@ -61,10 +60,7 @@ struct HighlightMessage {
     case_sensitive: bool,
     #[serde(default)]
     select_mode: HighlightSelectMode,
-    #[serde(default)]
-    custom_select: String,
-    #[serde(default)]
-    whole_line: bool,
+    /// Per-group colors of the `custom` mode (Advanced in the Highlight tab)
     #[serde(default)]
     advanced_selections: Vec<AdvancedSelectionMessage>,
     focus: bool,
@@ -73,12 +69,9 @@ struct HighlightMessage {
 
 #[derive(Clone)]
 struct HighlightSettings {
-    _id: u64,
-    text: String,
     color: String,
-    is_regex: bool,
+    /// `Custom` only for a regex with at least one advanced selection
     select_mode: HighlightSelectMode,
-    custom_groups: Vec<usize>,   // capture group indices for plain custom mode
     advanced_custom: Vec<AdvancedSelectionSetting>, // per-group color overrides
     focus: bool,
     remove: bool,
@@ -404,12 +397,8 @@ fn collect_advanced_groups_for_remove(advanced_custom: &[AdvancedSelectionSettin
 /// mode (the whole match when none of them matched), the whole matches otherwise.
 fn removal_spans(hl: &HighlightSettings, text: &str) -> Vec<(usize, usize)> {
     let mut spans: Vec<(usize, usize)> = Vec::new();
-    if hl.is_regex && hl.select_mode == HighlightSelectMode::Custom {
-        let groups = if hl.advanced_custom.is_empty() {
-            hl.custom_groups.clone()
-        } else {
-            collect_advanced_groups_for_remove(&hl.advanced_custom)
-        };
+    if hl.select_mode == HighlightSelectMode::Custom {
+        let groups = collect_advanced_groups_for_remove(&hl.advanced_custom);
         for captures in hl.matcher.captures_iter(text) {
             let Some(whole_match) = captures.get(0) else { continue };
             let selected = collect_selected_group_spans(&captures, &groups);
@@ -430,18 +419,11 @@ fn removal_spans(hl: &HighlightSettings, text: &str) -> Vec<(usize, usize)> {
 /// groups in custom mode (the whole match when none of them matched), the whole matches otherwise.
 fn colored_spans<'a>(hl: &'a HighlightSettings, text: &str) -> Vec<ColoredSpan<'a>> {
     let mut spans: Vec<ColoredSpan> = Vec::new();
-    if hl.is_regex && hl.select_mode == HighlightSelectMode::Custom {
+    if hl.select_mode == HighlightSelectMode::Custom {
         for captures in hl.matcher.captures_iter(text) {
             let Some(whole_match) = captures.get(0) else { continue };
             let offset = whole_match.start();
-            let selected: Vec<ColoredSpan> = if hl.advanced_custom.is_empty() {
-                collect_selected_group_spans(&captures, &hl.custom_groups)
-                    .into_iter()
-                    .map(|(start, end)| ColoredSpan { start, end, color: &hl.color })
-                    .collect()
-            } else {
-                collect_advanced_colored_spans(&captures, &hl.advanced_custom)
-            };
+            let selected = collect_advanced_colored_spans(&captures, &hl.advanced_custom);
             if selected.is_empty() {
                 spans.push(ColoredSpan { start: whole_match.start(), end: whole_match.end(), color: &hl.color });
             } else {
@@ -567,7 +549,7 @@ fn process_line(
     let mut removed_line = false;
 
     for hl in highlights_vec {
-        if hl.text.is_empty() || !hl.matcher.is_match(&line.text) {
+        if !hl.matcher.is_match(&line.text) {
             continue;
         }
         any_rule_matched = true;
@@ -588,7 +570,7 @@ fn process_line(
             }
         }
 
-        if hl.focus && !hl.remove {
+        if hl.focus {
             matched_for_focus = true;
         }
     }
@@ -728,8 +710,11 @@ async fn append_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Resu
 }
 
 /// Converts a rule received from the frontend into its processing form.
-/// Returns `None` when its regex does not compile, so the rule is skipped.
+/// Returns `None` for a rule without text or whose regex does not compile, so the rule is skipped.
 fn build_highlight_settings(elem: HighlightMessage) -> Option<HighlightSettings> {
+    if elem.text.is_empty() {
+        return None;
+    }
     let pattern = if elem.is_regex {
         elem.text.clone()
     } else {
@@ -746,17 +731,8 @@ fn build_highlight_settings(elem: HighlightMessage) -> Option<HighlightSettings>
         }
     };
 
-    let mut select_mode = if elem.whole_line {
-        HighlightSelectMode::WholeLine
-    } else {
-        elem.select_mode
-    };
-
-    if !elem.is_regex && select_mode == HighlightSelectMode::Custom {
-        select_mode = HighlightSelectMode::Match;
-    }
-
-    let advanced_custom = if elem.is_regex && select_mode == HighlightSelectMode::Custom {
+    // Capture groups only exist in a regex
+    let advanced_custom: Vec<AdvancedSelectionSetting> = if elem.is_regex && elem.select_mode == HighlightSelectMode::Custom {
         elem.advanced_selections
             .into_iter()
             .map(|selection| AdvancedSelectionSetting {
@@ -764,26 +740,22 @@ fn build_highlight_settings(elem: HighlightMessage) -> Option<HighlightSettings>
                 custom_groups: parse_custom_groups(&selection.custom_select),
             })
             .filter(|selection| !selection.custom_groups.is_empty())
-            .collect::<Vec<_>>()
+            .collect()
     } else {
         Vec::new()
     };
-
-    let custom_groups = if elem.is_regex && select_mode == HighlightSelectMode::Custom && advanced_custom.is_empty() {
-        parse_custom_groups(&elem.custom_select)
+    // Without any group selected, the rule colors its whole matches
+    let select_mode = if elem.select_mode == HighlightSelectMode::Custom && advanced_custom.is_empty() {
+        HighlightSelectMode::Match
     } else {
-        Vec::new()
+        elem.select_mode
     };
 
     Some(HighlightSettings {
-        _id: elem.id,
-        text: elem.text,
         color: elem.color,
-        is_regex: elem.is_regex,
         select_mode,
-        custom_groups,
         advanced_custom,
-        focus: if elem.remove { false } else { elem.focus },
+        focus: elem.focus && !elem.remove,
         remove: elem.remove,
         matcher,
     })
@@ -1435,14 +1407,11 @@ mod process_line_tests {
     /// Plain-text, case-sensitive highlight rule, as the frontend sends it.
     fn rule(text: &str, color: &str) -> HighlightMessage {
         HighlightMessage {
-            id: 0,
             text: text.to_string(),
             color: color.to_string(),
             is_regex: false,
             case_sensitive: true,
             select_mode: HighlightSelectMode::Match,
-            custom_select: String::new(),
-            whole_line: false,
             advanced_selections: Vec::new(),
             focus: false,
             remove: false,
@@ -1454,7 +1423,7 @@ mod process_line_tests {
     }
 
     fn whole_line(text: &str, color: &str) -> HighlightMessage {
-        HighlightMessage { whole_line: true, select_mode: HighlightSelectMode::WholeLine, ..rule(text, color) }
+        HighlightMessage { select_mode: HighlightSelectMode::WholeLine, ..rule(text, color) }
     }
 
     fn remove(rule: HighlightMessage) -> HighlightMessage {
@@ -1622,6 +1591,32 @@ mod process_line_tests {
     fn advanced_colors_each_group() {
         let rule = advanced(r"(\w+)=(\d+)", R, &[(R, "1"), (G, "2")]);
         assert_eq!(rendered(&process("x=1 y=22", vec![rule]).message), "{R:x}={G:1} {R:y}={G:22}");
+    }
+
+    #[test]
+    fn rules_sent_by_the_highlight_tab_are_accepted() {
+        // As `toHighlightPayload` sends a whole line rule and an advanced one
+        let rules: Vec<HighlightMessage> = serde_json::from_str(r##"[
+            {"text":"err","color":"#ff0000","is_regex":false,"case_sensitive":true,"select_mode":"whole_line","focus":true,"remove":false},
+            {"text":"(\\w+)=(\\d+)","color":"#00ff00","is_regex":true,"case_sensitive":true,"select_mode":"custom","focus":false,"remove":false,
+             "advanced_selections":[{"color":"#0000ff","custom_select":"2"}]}
+        ]"##).unwrap();
+        let payload = process("err x=1", rules);
+        assert_eq!(rendered(&payload.message), "{#ff0000:err x=}{#0000ff:1}");
+        assert!(payload.matched);
+    }
+
+    #[test]
+    fn rule_without_text_is_skipped() {
+        // A new row of the Highlight tab, not filled yet
+        let payload = process("abc", vec![rule("", R), HighlightMessage { focus: true, ..regex("", G) }]);
+        assert_eq!((payload.message.as_str(), payload.rawline, payload.matched), ("abc", None, false));
+    }
+
+    #[test]
+    fn advanced_on_plain_text_colors_the_matches() {
+        let rule = HighlightMessage { is_regex: false, ..advanced("(a)", G, &[(R, "1")]) };
+        assert_eq!(rendered(&process("x(a)", vec![rule]).message), "x{G:(a)}");
     }
 
     #[test]
@@ -1820,14 +1815,11 @@ mod refresh_tests {
             publish_append(&handle, process_batch(&handle, with_timestamp(vec!["a".into(), "b".into()], Some(7))).await).await;
             publish_one(&handle, state.next_marker(Some(8))).await;
             *state.highlights.lock().await = Arc::new(vec![build_highlight_settings(HighlightMessage {
-                id: 0,
                 text: "b".into(),
                 color: "R".into(),
                 is_regex: false,
                 case_sensitive: true,
                 select_mode: HighlightSelectMode::Match,
-                custom_select: String::new(),
-                whole_line: false,
                 advanced_selections: Vec::new(),
                 focus: true,
                 remove: false,

@@ -547,15 +547,12 @@ struct Payload {
 
 ```rust
 struct HighlightMessage {
-    id: u64,
     text: String,
     color: String,
     is_regex: bool,
     case_sensitive: bool,   // default true
     select_mode: HighlightSelectMode,  // "match" | "whole_line" | "custom"
-    custom_select: String,
-    whole_line: bool,
-    advanced_selections: Vec<AdvancedSelectionMessage>,
+    advanced_selections: Vec<AdvancedSelectionMessage>, // groups and colors of the "custom" mode
     focus: bool,
     remove: bool,
 }
@@ -571,7 +568,8 @@ struct AdvancedSelectionMessage {
 When `advanced = true` and `is_regex = true`:
 - `select_mode` is set to `"custom"`
 - `advanced_selections` is populated with each selection's `{ color, custom_select: selector }`
-- If `advanced_selections` is empty, a single entry with the parent color and empty selector is used
+
+The backend skips a rule without text, ignores the selections without any valid group, and treats a `"custom"` rule left without selection (or that is not a regex) as `"match"`: it colors the whole matches.
 
 Otherwise:
 - `select_mode` is `"whole_line"` if `whole_line = true`, else `"match"`
