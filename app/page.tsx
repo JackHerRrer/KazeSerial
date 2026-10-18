@@ -22,10 +22,10 @@ import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
-import Tooltip from '@mui/material/Tooltip';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
+import ToolbarButton from './components/ToolbarButton';
 import SearchBar from './components/SearchBar';
 import { useLogSearch } from './hooks/useLogSearch';
 import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
@@ -67,6 +67,11 @@ const findLogIndex = (lines: SerialMessage[], id: number): number => {
 // Copy of `lines` with `line` inserted at `index`
 const insertAt = (lines: SerialMessage[], index: number, line: SerialMessage): SerialMessage[] =>
   [...lines.slice(0, index), line, ...lines.slice(index)];
+
+// Appends a numbered marker line, e.g. to delimit a reproduction attempt
+const addMarker = () => {
+  invoke<void>('add_marker').catch((err: unknown) => console.error(err));
+};
 
 /** Generates synthetic UART-style log lines for demo purposes */
 const generateDemoLogs = (count: number): string[] => {
@@ -139,44 +144,30 @@ export default function Home() {
     invoke<void>('clear_logs').catch((err: unknown) => console.error(err));
   };
 
+  // Keyboard shortcuts: Ctrl+Shift+R clears the main and focus logs, Ctrl+F opens the search bar
+  // (or selects its text when it is already open), Ctrl+M appends a marker
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'R') {
-        e.preventDefault();
+      if (!e.ctrlKey) return;
+      const key = e.key.toLowerCase();
+      if (e.shiftKey && key === 'r') {
         setLogs([]);
         setFocusLogs([]);
         invoke<void>('clear_logs').catch((err: unknown) => console.error(err));
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Ctrl+F opens the search bar, or selects its text when it is already open
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
+      } else if (!e.shiftKey && key === 'f') {
         openSearch();
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
+      } else if (!e.shiftKey && key === 'm') {
+        addMarker();
+      } else {
+        return;
       }
+      e.preventDefault();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openSearch]);
-
-  // Ctrl+M appends a marker line, e.g. to delimit a reproduction attempt
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
-        e.preventDefault();
-        invoke<void>('add_marker').catch((err: unknown) => console.error(err));
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   // Log files are written by the backend, which gets their settings at launch and on every
   // change. Lines are written as Save writes them, so it also gets the timestamp settings.
@@ -235,7 +226,7 @@ export default function Home() {
 
   // Click on a focus row: scroll the main terminal to the matching line and highlight it
   const onClickFocusLogs = (id: number) => {
-    const index = logs.findIndex(log => log.id === id);
+    const index = findLogIndex(logs, id);
     if (index !== -1) {
       listRefMain.current?.scrollToRow({ align: 'center', behavior: 'smooth', index });
       setSelectedMainLineId(prev => prev === id ? null : id);
@@ -281,6 +272,13 @@ export default function Home() {
       ? formatTimestamp(msg.timestamp, timestamps.format)
       : '';
     return timestampColumnText(timestamp, timestamps.width) + text;
+  };
+
+  // Save: writes `lines` as shown to a file chosen by the user
+  const saveLines = async (lines: SerialMessage[]) => {
+    const text = lines.map((_, index) => savedLineText(lines, index) + '\n').join('');
+    const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
+    if (filePath) await writeTextFile(filePath, text);
   };
 
   // Re-apply current highlight rules to all lines: the backend reprocesses the lines it recorded
@@ -450,146 +448,27 @@ export default function Home() {
                       gap: 1,
                     }}
                   >
-                    <Tooltip title="Search (Ctrl+F)" placement="top" arrow>
-                    <IconButton
-                      aria-label="search"
-                      aria-pressed={search.isOpen}
-                      size="medium"
-                      color="inherit"
-                      onClick={search.isOpen ? search.close : search.open}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: search.isOpen ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: search.isOpen ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
+                    <ToolbarButton title="Search (Ctrl+F)" label="search" active={search.isOpen} onClick={search.isOpen ? search.close : search.open}>
                       <SearchIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Auto-scroll" placement="top" arrow>
-                    <IconButton
-                      aria-label="toggle auto-scroll"
-                      aria-pressed={isMainAutoScrollEnabled}
-                      size="medium"
-                      color="inherit"
-                      onClick={onToggleAutoScrollFromLogs}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: isMainAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: isMainAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
+                    </ToolbarButton>
+                    <ToolbarButton title="Auto-scroll" label="toggle auto-scroll" active={isMainAutoScrollEnabled} onClick={onToggleAutoScrollFromLogs}>
                       <KeyboardArrowDownIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Apply current highlight rules to all logs (Usefull when rules have changed)" placement="top" arrow>
-                    <IconButton
-                      aria-label="refresh logs"
-                      size="medium"
-                      color="inherit"
-                      onClick={onClickRefreshAll}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
+                    </ToolbarButton>
+                    <ToolbarButton title="Apply current highlight rules to all logs (Usefull when rules have changed)" label="refresh logs" onClick={onClickRefreshAll}>
                       <RefreshIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Insert a marker (Ctrl+M)" placement="top" arrow>
-                    <IconButton
-                      aria-label="insert marker"
-                      size="medium"
-                      color="inherit"
-                      onClick={() => invoke<void>('add_marker').catch((err: unknown) => console.error(err))}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
+                    </ToolbarButton>
+                    <ToolbarButton title="Insert a marker (Ctrl+M)" label="insert marker" onClick={addMarker}>
                       <BookmarkAddOutlinedIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Save logs to file" placement="top" arrow>
-                    <IconButton
-                      aria-label="save logs to file"
-                      size="medium"
-                      color="inherit"
-                      onClick={async () => {
-                        let buf = '';
-                        for (let index = 0; index < logs.length; index++) {
-                          buf += savedLineText(logs, index) + '\n';
-                        }
-                        const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
-                        if (filePath) await writeTextFile(filePath, buf);
-                      }}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
+                    </ToolbarButton>
+                    <ToolbarButton title="Save logs to file" label="save logs to file" onClick={() => saveLines(logs)}>
                       <SaveIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                  <Tooltip title="Clear logs (Ctrl+Shift+R)" placement="top" arrow>
-                  <IconButton
-                    aria-label="clear logs"
-                    size="medium"
-                    color="inherit"
-                    onClick={onClearLogs}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
-                    <DeleteOutlineIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
-                    <Tooltip title="More options" placement="top" arrow>
-                    <IconButton
-                      aria-label="more options"
-                      size="medium"
-                      color="inherit"
-                      onClick={(e) => setMainMenuAnchor(e.currentTarget)}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': { bgcolor: 'rgba(30, 30, 30, 0.95)' },
-                      }}
-                    >
+                    </ToolbarButton>
+                    <ToolbarButton title="Clear logs (Ctrl+Shift+R)" label="clear logs" onClick={onClearLogs}>
+                      <DeleteOutlineIcon fontSize="medium" />
+                    </ToolbarButton>
+                    <ToolbarButton title="More options" label="more options" onClick={(e) => setMainMenuAnchor(e.currentTarget)}>
                       <MoreVertIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
+                    </ToolbarButton>
                     <Menu
                       anchorEl={mainMenuAnchor}
                       open={Boolean(mainMenuAnchor)}
@@ -675,71 +554,15 @@ export default function Home() {
                     gap: 1,
                   }}
                 >
-                  <Tooltip title="Auto-scroll" placement="top" arrow>
-                  <IconButton
-                    aria-label="toggle focus auto-scroll"
-                    aria-pressed={isFocusAutoScrollEnabled}
-                    size="medium"
-                    color="inherit"
-                    onClick={onToggleAutoScrollFromFocus}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: isFocusAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: isFocusAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
+                  <ToolbarButton title="Auto-scroll" label="toggle focus auto-scroll" active={isFocusAutoScrollEnabled} onClick={onToggleAutoScrollFromFocus}>
                     <KeyboardArrowDownIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Save focus logs to file" placement="top" arrow>
-                  <IconButton
-                    aria-label="save focus logs to file"
-                    size="medium"
-                    color="inherit"
-                    onClick={async () => {
-                      let buf = '';
-                      for (let index = 0; index < focusLogs.length; index++) {
-                        buf += savedLineText(focusLogs, index) + '\n';
-                      }
-                      const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
-                      if (filePath) await writeTextFile(filePath, buf);
-                    }}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
+                  </ToolbarButton>
+                  <ToolbarButton title="Save focus logs to file" label="save focus logs to file" onClick={() => saveLines(focusLogs)}>
                     <SaveIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Clear focus logs (Ctrl+Shift+R)" placement="top" arrow>
-                  <IconButton
-                    aria-label="clear focus logs"
-                    size="medium"
-                    color="inherit"
-                    onClick={clearFocusLogs}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
+                  </ToolbarButton>
+                  <ToolbarButton title="Clear focus logs (Ctrl+Shift+R)" label="clear focus logs" onClick={clearFocusLogs}>
                     <DeleteOutlineIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
+                  </ToolbarButton>
                 </Box>
                 <SerialTerminal
                   serial_messages={focusLogs}
