@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, type Ref, type RefObject } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react';
 import type { ListImperativeAPI } from 'react-window';
 import Box from '@mui/material/Box';
 import { MARKER_COLOR } from './SerialTerminalLine';
 import { type RowSearch } from './SerialTerminal';
 import { SerialMessage } from '../types/SerialMessage';
 import { lineRanges, unescapeHtml } from '../utils/search';
+import { minimapRows, NO_ROWS, rowCount, rowLines } from '../utils/minimapRows';
 
 // Width of the minimap, in px
 export const MINIMAP_WIDTH = 80;
@@ -110,14 +111,11 @@ const LogMinimap: React.FC<LogMinimapProps> = ({ ref, lines, listApiRef, rowHeig
   const dragRef = useRef<{ startY: number; startScrollTop: number; scale: number } | null>(null);
   const ratio = MINIMAP_ROW_HEIGHT / rowHeight;
 
-  // Lines hidden by a remove rule have no height in the terminal, so they are left out
-  const shownIndices = useMemo(() => {
-    const indices: number[] = [];
-    lines.forEach((line, index) => {
-      if (!line.removed_line) indices.push(index);
-    });
-    return indices;
-  }, [lines]);
+  // Lines hidden by a remove rule have no height in the terminal, so they are left out. The rows of
+  // the previous lines are kept, so a new line only scans itself
+  const [previousRows, setPreviousRows] = useState(NO_ROWS);
+  const rows = minimapRows(lines, previousRows);
+  if (rows !== previousRows) setPreviousRows(rows);
 
   // Draws at most once per frame, however many scroll events or renders happen in it
   const scheduleDraw = useCallback(() => {
@@ -148,11 +146,12 @@ const LogMinimap: React.FC<LogMinimapProps> = ({ ref, lines, listApiRef, rowHeig
 
     const { offset, sliderTop, sliderHeight } = minimapGeometry(list, height, ratio);
     const first = Math.max(0, Math.floor(offset / MINIMAP_ROW_HEIGHT));
-    const last = Math.min(shownIndices.length - 1, Math.ceil((offset + height) / MINIMAP_ROW_HEIGHT));
+    const last = Math.min(rowCount(rows) - 1, Math.ceil((offset + height) / MINIMAP_ROW_HEIGHT));
     const xOf = (character: number) => MINIMAP_LEFT_PADDING + character * MINIMAP_CHAR_WIDTH;
 
+    const indices = rowLines(rows, first, last);
     for (let row = first; row <= last; row++) {
-      const index = shownIndices[row];
+      const index = indices[row - first];
       const line = lines[index];
       const y = row * MINIMAP_ROW_HEIGHT - offset;
 
