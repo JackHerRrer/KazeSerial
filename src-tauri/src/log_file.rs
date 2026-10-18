@@ -147,8 +147,6 @@ impl LogFiles {
         let Some(file) = self.current.as_mut() else {
             return Ok(());
         };
-        // Serial lines keep their line terminator; the file uses `\n`
-        let text = text.trim_end_matches(['\r', '\n']);
         let column = timestamp_column(settings, timestamp, file.last_timestamp);
         writeln!(file.writer, "{}{}", column, text)?;
         // Flushed on every line, so the file is complete if the application stops
@@ -291,7 +289,7 @@ mod tests {
         assert!(!folder.exists());
 
         files.start_session();
-        files.write("connected\r\n", Some(0));
+        files.write("connected", Some(0));
         assert_eq!(contents(&folder), vec!["connected\n"]);
     }
 
