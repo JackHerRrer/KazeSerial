@@ -614,7 +614,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 - Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), its `focus` / `removed` flags, its timestamp and its marker flag. Refresh reprocesses the lines from here.
 - It is a ring buffer: past the capacity (default **500 000** lines, `KAZESERIAL_LOG_CAPACITY` to override), the oldest lines are evicted and counted as dropped.
 - It tracks the current source: `none`, `serial`, `file` (opened once with `open_file`) or `file_watch` (followed).
-- Records are in log order. Ids increase along the log, except for a marker inserted above a line, whose new id is larger than the ids around it; `wait_for_logs` and `wait_for_pattern` walk records in id order.
+- Records are in log order. Ids increase along the log, except for a marker inserted above a line, whose new id is larger than the ids around it; `wait_for_logs` and `wait_for_pattern` walk records in id order. While the records are in id order (no marker inserted since the last clear or replace), the records newer than an id are found by binary search, instead of scanning the whole log on every new line.
 - Appends and insertions wake up waiting MCP calls, so `wait_for_logs` and `wait_for_pattern` block instead of polling.
 
 ---

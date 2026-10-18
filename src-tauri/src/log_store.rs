@@ -13,7 +13,8 @@
 //! Records are kept in display order. Ids are given in the order lines are added, so they
 //! increase along the log, except for a marker inserted in the middle: it gets a new id, larger
 //! than the lines around it. Tools following the log by id (`after_id`) walk records in id
-//! order, so such a marker is reported once, as a new line.
+//! order, so such a marker is reported once, as a new line. While the records are in id order,
+//! the usual case, the newer records are found by binary search instead of scanning them all.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -78,16 +79,22 @@ struct Inner {
     capacity: usize,
     /// Lines evicted by the capacity cap since the last clear/replace.
     dropped: u64,
+    /// Records are in increasing id order. Set back only by a clear or a replace.
+    in_id_order: bool,
     source: LogSource,
 }
 
 impl Inner {
     /// Records with `id > after_id`, in id order (the order they were added).
-    fn newer_than(&self, after_id: u64) -> Vec<&LogRecord> {
+    fn newer_than(&self, after_id: u64) -> Box<dyn Iterator<Item = &LogRecord> + '_> {
+        if self.in_id_order {
+            let start = self.records.partition_point(|r| r.id <= after_id);
+            return Box::new(self.records.range(start..));
+        }
         let mut records: Vec<&LogRecord> = self.records.iter().filter(|r| r.id > after_id).collect();
         // Already sorted but for inserted markers, so this stable sort is close to linear
         records.sort_by_key(|r| r.id);
-        records
+        Box::new(records.into_iter())
     }
 
     /// Drops the oldest records until the buffer fits `capacity`.
@@ -130,6 +137,7 @@ impl LogStore {
                 records: VecDeque::new(),
                 capacity,
                 dropped: 0,
+                in_id_order: true,
                 source: LogSource::None,
             }),
             notify: Notify::new(),
@@ -143,6 +151,8 @@ impl LogStore {
         }
         {
             let mut inner = self.inner.write().await;
+            let follows = inner.records.back().is_none_or(|last| last.id < records[0].id);
+            inner.in_id_order &= follows && records.is_sorted_by_key(|r| r.id);
             inner.records.extend(records);
             inner.enforce_capacity();
         }
@@ -153,6 +163,7 @@ impl LogStore {
     pub async fn replace(&self, records: Vec<LogRecord>) {
         {
             let mut inner = self.inner.write().await;
+            inner.in_id_order = records.is_sorted_by_key(|r| r.id);
             inner.records = VecDeque::from(records);
             inner.dropped = 0;
             inner.enforce_capacity();
@@ -168,6 +179,8 @@ impl LogStore {
             let Some(position) = inner.records.iter().position(|r| r.id == before_id) else {
                 return;
             };
+            inner.in_id_order &= record.id < before_id
+                && (position == 0 || inner.records[position - 1].id < record.id);
             inner.records.insert(position, record);
             inner.enforce_capacity();
         }
@@ -178,6 +191,7 @@ impl LogStore {
         let mut inner = self.inner.write().await;
         inner.records.clear();
         inner.dropped = 0;
+        inner.in_id_order = true;
     }
 
     pub async fn set_source(&self, source: LogSource) {
@@ -268,7 +282,6 @@ impl LogStore {
         let inner = self.inner.read().await;
         inner
             .newer_than(after_id)
-            .into_iter()
             .take(max_lines)
             .cloned()
             .collect()
@@ -804,6 +817,24 @@ mod tests {
         let (records, _) = store.page(0, 10).await;
         assert_eq!(records.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 4, 2, 3]);
         assert_eq!(store.stats().await.newest_id, Some(4), "the newest id, not the last line");
+    }
+
+    #[tokio::test]
+    async fn following_by_id_with_gaps_in_the_ids() {
+        let ids = |records: Vec<LogRecord>| records.iter().map(|r| r.id).collect::<Vec<_>>();
+        let store = store_with(&[(1, "a"), (2, "b"), (5, "c"), (9, "d")]).await;
+        assert_eq!(ids(store.after(3, 10).await), vec![5, 9]);
+        assert_eq!(ids(store.after(0, 3).await), vec![1, 2, 5]);
+        assert_eq!(ids(store.after(9, 10).await), Vec::<u64>::new());
+
+        // A line of another source appended after a newer one: still followed in id order
+        store.append(vec![record(7, "late")]).await;
+        assert_eq!(ids(store.after(3, 10).await), vec![5, 7, 9]);
+
+        // Cleared, the log is in id order again
+        store.clear().await;
+        store.append(vec![record(10, "e"), record(11, "f")]).await;
+        assert_eq!(ids(store.after(10, 10).await), vec![11]);
     }
 
     #[tokio::test]
