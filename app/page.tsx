@@ -344,9 +344,6 @@ export default function Home() {
     };
   }, []);
 
-
-
-
   const onToggleAutoScrollFromLogs = () => {
     setIsMainAutoScrollEnabled((prev) => {
       const next = !prev;

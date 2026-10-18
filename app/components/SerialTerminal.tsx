@@ -51,8 +51,6 @@ export type Timestamps = {
 
 interface SerialTerminalProps {
   serial_messages: SerialMessage[];
-  height?: number | string;
-  width?: number | string;
   listRef?: Ref<ListImperativeAPI>;
   onScroll: UIEventHandler<HTMLDivElement>;
   onClickRow?: (message_id: number) => void;
@@ -67,8 +65,6 @@ interface SerialTerminalProps {
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
   serial_messages,
-  height = '100%',
-  width = '100%',
   listRef,
   onScroll,
   onClickRow,
@@ -175,8 +171,8 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
       }}
       sx={{
         position: 'relative',
-        height: height,
-        width: width,
+        height: '100%',
+        width: '100%',
         bgcolor: '#1e1e1e',
         color: '#d4d4d4',
         p: `${TERMINAL_PADDING}px`,
@@ -193,7 +189,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
           // vertical scrollbar in every webview: `scrollbar-width: none` also hides the horizontal
           // one, `::-webkit-scrollbar` is ignored by WebView2 since `scrollbar-width` is set, and
           // overlay scrollbars (WebKitGTK) take no width to clip.
-          style={{ height, flex: 1, minWidth: 0, paddingBottom:'20px', overflowY: minimap ? 'hidden' : 'auto', overflowX: 'auto' }}
+          style={{ height: '100%', flex: 1, minWidth: 0, paddingBottom:'20px', overflowY: minimap ? 'hidden' : 'auto', overflowX: 'auto' }}
           rowCount={serial_messages.length}
           rowHeight={(index) => {
             const line = serial_messages[index];

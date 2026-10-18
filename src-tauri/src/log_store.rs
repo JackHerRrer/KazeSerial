@@ -390,7 +390,7 @@ impl LogStore {
             .iter()
             .enumerate()
             .filter(|(_, r)| {
-                opts.from_id.map_or(true, |f| r.id >= f) && opts.to_id.map_or(true, |t| r.id <= t)
+                opts.from_id.is_none_or(|f| r.id >= f) && opts.to_id.is_none_or(|t| r.id <= t)
             })
             .collect();
 

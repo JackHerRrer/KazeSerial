@@ -18,18 +18,13 @@ use tail_splitter::{decode_utf8, TailSplitter};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::{Mutex, Notify};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum HighlightSelectMode {
+    #[default]
     Match,
     WholeLine,
     Custom,
-}
-
-impl Default for HighlightSelectMode {
-    fn default() -> Self {
-        Self::Match
-    }
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -875,12 +870,9 @@ async fn open_port(
                         }
                         match port.read(&mut temp) {
                             Ok(1) => {
-                                if temp[0] != b'\r'
-                                    && temp[0] != b'\n'
-                                    && temp[0].is_ascii() == false
-                                {
+                                if !temp[0].is_ascii() {
                                     let message_id = app_handle.state::<AppState>().message_id_counter.fetch_add(1, Ordering::SeqCst);
-                                    let test = format!("{:#02x} ", &temp[0]);
+                                    let test = format!("{:#04x} ", temp[0]);
                                     publish_one(
                                         &app_handle,
                                         Payload {
