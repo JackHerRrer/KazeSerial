@@ -122,7 +122,7 @@ Enabled by the **Show timestamps** setting of the [Config tab](#config-tab). Sho
   | | | `SSS` | milliseconds |
 
   Codes are case-sensitive (`MM` month, `mm` minutes) and there is no escaping, so a code inside a word is replaced too (the `ss` of `pass`). An empty pattern falls back to the default. All codes are fixed-width, so the column width is the length of the formatted pattern (`timestampWidth`), plus one character for the separating space; it is empty for lines without timestamp.
-- System messages also carry their own UTC `[HH:MM:SS]` in their text, which can differ from the local time shown in the gutter.
+- System messages also carry their time in their text, `[HH:MM:SS]` in local time: the same time as their timestamp in the gutter.
 - **Display only** (default): the timestamp is CSS generated content, like the line number: not selectable, not copied, not saved.
 - **In text** (**Include timestamps in copied and saved text**): the timestamp column is real text, so it is selectable and copied: the timestamp followed by a space (`HH:mm:ss.SSS line`), or blanks of the column width when the line shows no timestamp (missing or hidden by the inactivity option), so copied lines stay aligned as on screen. Save writes the same column on every line, in both terminals (`timestampColumnText` in `utils/timestamp.ts`). The line number stays out of the selection and the copied text.
 - The terminal receives it through an optional `timestamps` prop (`{ inText, inactivityMs?, format, width }`); `inactivityMs` is set only when **Only after inactivity** is checked, `width` is the formatted width of `format`.
@@ -581,7 +581,7 @@ Otherwise:
 
 Certain backend events (connection and MCP server lifecycle) are surfaced as regular log lines in the main terminal, rendered in the same monospace font as serial data. They are processed through the current highlight rules like any other line, so they can be colored, sent to the focus panel or removed.
 
-Format: `[HH:MM:SS] KazeSerial: {message}` where the timestamp is UTC wall-clock time.
+Format: `[HH:MM:SS] KazeSerial: {message}` where the time is the local time of the line's timestamp (`log_file::format_timestamp`).
 
 | Trigger | Message |
 |---|---|

@@ -238,7 +238,7 @@ fn timestamp_column(settings: &LogFileSettings, timestamp: Option<u64>, previous
 
 /// Formats a reception time in local time, like `formatTimestamp` in the frontend: the codes
 /// `YYYY MM DD HH mm ss SSS` are replaced, any other character is kept.
-fn format_timestamp(timestamp: u64, format: &str) -> String {
+pub fn format_timestamp(timestamp: u64, format: &str) -> String {
     let Some(date) = Local.timestamp_millis_opt(timestamp as i64).single() else {
         return String::new();
     };

@@ -127,28 +127,17 @@ fn with_timestamp(lines: Vec<String>, timestamp: Option<u64>) -> Vec<(String, Op
     lines.into_iter().map(|line| (line, timestamp)).collect()
 }
 
-/// Returns the current UTC wall-clock time as HH:MM:SS.
-fn make_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let h = (secs % 86400) / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    format!("{:02}:{:02}:{:02}", h, m, s)
-}
-
 /// Emits a KazeSerial system message as a regular `serial-data` event.
-/// These appear in the log with format `[HH:MM:SS] KazeSerial: {msg}`.
+/// These appear in the log with format `[HH:MM:SS] KazeSerial: {msg}`, in local time like the
+/// timestamp column: the time is the reception time of the line.
 /// The message is processed through the current highlight rules like any other line.
 async fn emit_system_msg(app: &AppHandle<impl Runtime>, msg: String) {
-    let raw = format!("[{}] KazeSerial: {}", make_timestamp(), msg);
+    let timestamp = now_ms();
+    let raw = format!("[{}] KazeSerial: {}", log_file::format_timestamp(timestamp, "HH:mm:ss"), msg);
     let state = app.state::<AppState>();
     let message_id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
     let highlights = state.highlights.lock().await.clone();
-    let payload = process_line(raw, &highlights, message_id, Some(now_ms()));
+    let payload = process_line(raw, &highlights, message_id, Some(timestamp));
     publish_one(app, payload).await;
 }
 
@@ -1855,5 +1844,30 @@ mod refresh_tests {
             ]);
             assert_eq!(*window.lock().unwrap(), vec![1, 2, 3]);
         });
+    }
+}
+
+#[cfg(test)]
+mod system_message_tests {
+    use super::*;
+    use chrono::TimeZone;
+    use tauri::Listener;
+
+    #[test]
+    fn system_message_shows_its_timestamp_in_local_time() {
+        let app = tauri::test::mock_app();
+        app.manage(AppState::new());
+        let received = Arc::new(std::sync::Mutex::new(None));
+        let slot = received.clone();
+        app.listen_any("serial-data", move |event| {
+            *slot.lock().unwrap() = Some(serde_json::from_str::<serde_json::Value>(event.payload()).unwrap());
+        });
+
+        tauri::async_runtime::block_on(emit_system_msg(app.handle(), "hello".to_string()));
+
+        let payload = received.lock().unwrap().take().expect("a serial-data event");
+        let timestamp = payload["timestamp"].as_i64().unwrap();
+        let local = chrono::Local.timestamp_millis_opt(timestamp).unwrap();
+        assert_eq!(payload["message"], local.format("[%H:%M:%S] KazeSerial: hello").to_string());
     }
 }
