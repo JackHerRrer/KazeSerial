@@ -10,6 +10,7 @@ import RowComponent, { MARKER_COLOR } from './SerialTerminalLine';
 import LogMinimap, { MINIMAP_WIDTH, scrollByWheel, type LogMinimapHandle } from './LogMinimap';
 import { SerialMessage } from '../types/SerialMessage';
 import { type SearchMatch } from '../utils/search';
+import { NO_ROWS, rowCount, rowOf, terminalRows } from '../utils/terminalRows';
 
 // Padding of the terminal box, in px
 const TERMINAL_PADDING = 8;
@@ -19,7 +20,7 @@ const ROW_HEIGHT = 20;
 // button stays clear of the vertical scrollbar
 const INSERT_MARKER_RIGHT_GAP = 20;
 
-/** Line number gutter: number shown for each row, and digit count of the widest number */
+/** Line number gutter: number shown for each line index, and digit count of the widest number */
 export type LineNumbers = {
   numberOf: (index: number) => number | undefined;
   digits: number;
@@ -85,15 +86,25 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [hoveredRow, setHoveredRow] = useState<{ id: number; top: number } | null>(null);
 
-  // The list is also scrolled by the minimap, so its API is kept here and forwarded to `listRef`
+  // Lines hidden by a remove rule get no row, so every row has the same height: the list then
+  // finds the rows in view without measuring the rows above them. The rows of the previous lines
+  // are kept, so a new line only scans itself
+  const [previousRows, setPreviousRows] = useState(NO_ROWS);
+  const rows = terminalRows(serial_messages, previousRows);
+  if (rows !== previousRows) setPreviousRows(rows);
+
+  // The list is also scrolled by the minimap, so its API is kept here and forwarded to `listRef`,
+  // which scrolls to line indices
   const listApiRef = useRef<ListImperativeAPI | null>(null);
   const minimapRef = useRef<LogMinimapHandle>(null);
   useImperativeHandle(listRef, () => ({
     get element() {
       return listApiRef.current?.element ?? null;
     },
-    scrollToRow: (params) => listApiRef.current?.scrollToRow(params),
-  }), []);
+    scrollToRow: (params) => {
+      if (rowCount(rows) > 0) listApiRef.current?.scrollToRow({ ...params, index: rowOf(rows, params.index) });
+    },
+  }), [rows]);
 
   // Finds the row at the pointer height and its top relative to the box. Only the height counts:
   // scrolled horizontally, short rows no longer reach the pointer. Called when the pointer moves,
@@ -190,13 +201,10 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
           // one, `::-webkit-scrollbar` is ignored by WebView2 since `scrollbar-width` is set, and
           // overlay scrollbars (WebKitGTK) take no width to clip.
           style={{ height: '100%', flex: 1, minWidth: 0, paddingBottom:'20px', overflowY: minimap ? 'hidden' : 'auto', overflowX: 'auto' }}
-          rowCount={serial_messages.length}
-          rowHeight={(index) => {
-            const line = serial_messages[index];
-            return line?.removed_line ? 0 : ROW_HEIGHT;
-          }}
+          rowCount={rowCount(rows)}
+          rowHeight={ROW_HEIGHT}
           rowComponent={RowComponent}
-          rowProps={{ serialMessages: serial_messages, onClickRow: handleClickRow, selectedLineId, hoveredLineId: hoveredRow?.id, lineNumbers, timestamps, arrival, search }}
+          rowProps={{ rows, onClickRow: handleClickRow, selectedLineId, hoveredLineId: hoveredRow?.id, lineNumbers, timestamps, arrival, search }}
           overscanCount={10}
           listRef={listApiRef}
           onScroll={(event) => {
@@ -209,7 +217,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
         {minimap && (
           <LogMinimap
             ref={minimapRef}
-            lines={serial_messages}
+            rows={rows}
             listApiRef={listApiRef}
             rowHeight={ROW_HEIGHT}
             selectedLineId={selectedLineId}

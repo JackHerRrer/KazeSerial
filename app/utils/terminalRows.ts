@@ -1,20 +1,20 @@
 import type { SerialMessage } from '../types/SerialMessage';
 
 /**
- * Rows of the minimap: the lines of the log except those hidden by a remove rule, which have no
- * height in the terminal. Kept as the indices of the hidden lines, usually none, so lines appended
- * to the log only need their own scan.
+ * Rows of a terminal and its minimap: the lines of the log except those hidden by a remove rule.
+ * Kept as the indices of the hidden lines, usually none, so lines appended to the log only need
+ * their own scan.
  */
-export type MinimapRows = {
+export type TerminalRows = {
   lines: SerialMessage[];
   // Indices of the hidden lines, in increasing order
   hidden: number[];
 };
 
-export const NO_ROWS: MinimapRows = { lines: [], hidden: [] };
+export const NO_ROWS: TerminalRows = { lines: [], hidden: [] };
 
 /** Rows of `lines`. When `lines` appends to the lines of `previous`, only the new lines are scanned. */
-export const minimapRows = (lines: SerialMessage[], previous: MinimapRows): MinimapRows => {
+export const terminalRows = (lines: SerialMessage[], previous: TerminalRows): TerminalRows => {
   if (lines === previous.lines) return previous;
   const known = previous.lines.length;
   // Inserting or replacing lines changes the line at the last known position, appending does not
@@ -27,10 +27,10 @@ export const minimapRows = (lines: SerialMessage[], previous: MinimapRows): Mini
   return { lines, hidden };
 };
 
-export const rowCount = ({ lines, hidden }: MinimapRows): number => lines.length - hidden.length;
+export const rowCount = ({ lines, hidden }: TerminalRows): number => lines.length - hidden.length;
 
 /** Line index of each row from `first` to `last` */
-export const rowLines = ({ hidden }: MinimapRows, first: number, last: number): number[] => {
+export const rowLines = ({ hidden }: TerminalRows, first: number, last: number): number[] => {
   // Hidden lines before the line of row `first`: those with at most `first` rows before them
   let low = 0;
   let high = hidden.length;
@@ -49,4 +49,20 @@ export const rowLines = ({ hidden }: MinimapRows, first: number, last: number): 
     indices.push(index);
   }
   return indices;
+};
+
+/** Line index of row `row` */
+export const lineOf = (rows: TerminalRows, row: number): number => rowLines(rows, row, row)[0];
+
+/** Row of the line at `index`; for a hidden line, the row of the next shown line, or the last row */
+export const rowOf = ({ lines, hidden }: TerminalRows, index: number): number => {
+  // Hidden lines before `index`
+  let low = 0;
+  let high = hidden.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (hidden[middle] < index) low = middle + 1;
+    else high = middle;
+  }
+  return Math.min(index - low, lines.length - hidden.length - 1);
 };

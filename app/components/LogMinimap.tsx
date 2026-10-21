@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, type Ref, type RefObject } from 'react';
 import type { ListImperativeAPI } from 'react-window';
 import Box from '@mui/material/Box';
 import { MARKER_COLOR } from './SerialTerminalLine';
 import { type RowSearch } from './SerialTerminal';
 import { SerialMessage } from '../types/SerialMessage';
 import { lineRanges, unescapeHtml } from '../utils/search';
-import { minimapRows, NO_ROWS, rowCount, rowLines } from '../utils/minimapRows';
+import { rowCount, rowLines, type TerminalRows } from '../utils/terminalRows';
 
 // Width of the minimap, in px
 export const MINIMAP_WIDTH = 80;
@@ -93,7 +93,8 @@ export type LogMinimapHandle = {
 
 interface LogMinimapProps {
   ref?: Ref<LogMinimapHandle>;
-  lines: SerialMessage[];
+  // Rows of the terminal: lines hidden by a remove rule are left out
+  rows: TerminalRows;
   // List of the terminal, scrolled by the minimap
   listApiRef: RefObject<ListImperativeAPI | null>;
   // Height of a terminal row, in px
@@ -103,19 +104,13 @@ interface LogMinimapProps {
 }
 
 /** Overview of the log next to a terminal: click or drag to scroll the terminal */
-const LogMinimap: React.FC<LogMinimapProps> = ({ ref, lines, listApiRef, rowHeight, selectedLineId, search }) => {
+const LogMinimap: React.FC<LogMinimapProps> = ({ ref, rows, listApiRef, rowHeight, selectedLineId, search }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef(0);
   const drawRef = useRef<() => void>(() => undefined);
   const isSliderHoveredRef = useRef(false);
   const dragRef = useRef<{ startY: number; startScrollTop: number; scale: number } | null>(null);
   const ratio = MINIMAP_ROW_HEIGHT / rowHeight;
-
-  // Lines hidden by a remove rule have no height in the terminal, so they are left out. The rows of
-  // the previous lines are kept, so a new line only scans itself
-  const [previousRows, setPreviousRows] = useState(NO_ROWS);
-  const rows = minimapRows(lines, previousRows);
-  if (rows !== previousRows) setPreviousRows(rows);
 
   // Draws at most once per frame, however many scroll events or renders happen in it
   const scheduleDraw = useCallback(() => {
@@ -152,7 +147,7 @@ const LogMinimap: React.FC<LogMinimapProps> = ({ ref, lines, listApiRef, rowHeig
     const indices = rowLines(rows, first, last);
     for (let row = first; row <= last; row++) {
       const index = indices[row - first];
-      const line = lines[index];
+      const line = rows.lines[index];
       const y = row * MINIMAP_ROW_HEIGHT - offset;
 
       // A marker is drawn as a bar across the minimap, so it stands out like in the terminal

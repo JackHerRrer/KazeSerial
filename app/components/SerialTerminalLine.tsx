@@ -4,10 +4,10 @@ import { useLayoutEffect, useRef } from "react";
 import { type RowComponentProps } from "react-window";
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { SerialMessage } from "../types/SerialMessage";
 import { type Arrival, type LineNumbers, type RowSearch, type Timestamps } from "./SerialTerminal";
 import { domRanges, highlightNamed, lineRanges } from "../utils/search";
 import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils/timestamp";
+import { lineOf, type TerminalRows } from "../utils/terminalRows";
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
 // Row under the pointer: lighter than the selection, layered over the row background
@@ -17,8 +17,8 @@ export const MARKER_COLOR = '#c586c0';
 const MARKER_BACKGROUND = 'rgba(197,134,192,0.12)';
 
 export default function RowComponent({
-  index,
-  serialMessages,
+  index: row,
+  rows,
   style,
   onClickRow,
   selectedLineId,
@@ -28,7 +28,7 @@ export default function RowComponent({
   arrival,
   search,
 }: RowComponentProps<{
-  serialMessages: SerialMessage[];
+  rows: TerminalRows;
   onClickRow?: (message_id: number) => void;
   selectedLineId?: number | null;
   hoveredLineId?: number;
@@ -37,7 +37,9 @@ export default function RowComponent({
   arrival?: Arrival;
   search?: RowSearch;
 }>) {
-  const line = serialMessages[index];
+  // Index of the line in the log, as rows skip the hidden lines
+  const index = lineOf(rows, row);
+  const line = rows.lines[index];
   const rowRef = useRef<HTMLDivElement>(null);
   const arrivalMs = arrival?.durationMs;
   const arrivalColor = arrival?.color;
@@ -82,7 +84,7 @@ export default function RowComponent({
   // The selection already stands out more, so a selected row gets no hover tint
   const isHovered = !isSelected && hoveredLineId === line.id;
   const hoverLayer = `linear-gradient(${HOVERED_ROW_BACKGROUND}, ${HOVERED_ROW_BACKGROUND})`;
-  const timestamp = timestamps && line.timestamp != null && isTimestampShown(serialMessages, index, timestamps.inactivityMs)
+  const timestamp = timestamps && line.timestamp != null && isTimestampShown(rows.lines, index, timestamps.inactivityMs)
     ? formatTimestamp(line.timestamp, timestamps.format)
     : '';
   // Shared by the gutter boxes, sticky on the left so text scrolled horizontally passes under them
