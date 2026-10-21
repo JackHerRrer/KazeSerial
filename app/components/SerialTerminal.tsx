@@ -8,9 +8,8 @@ import Tooltip from '@mui/material/Tooltip';
 import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
 import RowComponent, { MARKER_COLOR } from './SerialTerminalLine';
 import LogMinimap, { MINIMAP_WIDTH, scrollByWheel, type LogMinimapHandle } from './LogMinimap';
-import { SerialMessage } from '../types/SerialMessage';
 import { type SearchMatch } from '../utils/search';
-import { NO_ROWS, rowCount, rowOf, terminalRows } from '../utils/terminalRows';
+import { type TerminalRows } from '../utils/terminalRows';
 
 // Padding of the terminal box, in px
 const TERMINAL_PADDING = 8;
@@ -51,7 +50,9 @@ export type Timestamps = {
 };
 
 interface SerialTerminalProps {
-  serial_messages: SerialMessage[];
+  // Lines hidden by a remove rule get no row, so every row has the same height: the list then
+  // finds the rows in view without measuring the rows above them
+  rows: TerminalRows;
   listRef?: Ref<ListImperativeAPI>;
   onScroll: UIEventHandler<HTMLDivElement>;
   onClickRow?: (message_id: number) => void;
@@ -65,7 +66,7 @@ interface SerialTerminalProps {
 }
 
 const SerialTerminal: React.FC<SerialTerminalProps> = ({
-  serial_messages,
+  rows,
   listRef,
   onScroll,
   onClickRow,
@@ -86,13 +87,6 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [hoveredRow, setHoveredRow] = useState<{ id: number; top: number } | null>(null);
 
-  // Lines hidden by a remove rule get no row, so every row has the same height: the list then
-  // finds the rows in view without measuring the rows above them. The rows of the previous lines
-  // are kept, so a new line only scans itself
-  const [previousRows, setPreviousRows] = useState(NO_ROWS);
-  const rows = terminalRows(serial_messages, previousRows);
-  if (rows !== previousRows) setPreviousRows(rows);
-
   // The list is also scrolled by the minimap, so its API is kept here and forwarded to `listRef`,
   // which scrolls to line indices
   const listApiRef = useRef<ListImperativeAPI | null>(null);
@@ -102,7 +96,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
       return listApiRef.current?.element ?? null;
     },
     scrollToRow: (params) => {
-      if (rowCount(rows) > 0) listApiRef.current?.scrollToRow({ ...params, index: rowOf(rows, params.index) });
+      if (rows.count > 0) listApiRef.current?.scrollToRow({ ...params, index: rows.rowOf(params.index) });
     },
   }), [rows]);
 
@@ -201,7 +195,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
           // one, `::-webkit-scrollbar` is ignored by WebView2 since `scrollbar-width` is set, and
           // overlay scrollbars (WebKitGTK) take no width to clip.
           style={{ height: '100%', flex: 1, minWidth: 0, paddingBottom:'20px', overflowY: minimap ? 'hidden' : 'auto', overflowX: 'auto' }}
-          rowCount={rowCount(rows)}
+          rowCount={rows.count}
           rowHeight={ROW_HEIGHT}
           rowComponent={RowComponent}
           rowProps={{ rows, onClickRow: handleClickRow, selectedLineId, hoveredLineId: hoveredRow?.id, lineNumbers, timestamps, arrival, search }}

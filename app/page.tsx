@@ -32,6 +32,7 @@ import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from 
 import { MINIMAP_WIDTH } from './components/LogMinimap';
 import { formatTimestamp, isTimestampShown, timestampColumnText, timestampWidth } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
+import { useTerminalRows } from './hooks/useTerminalRows';
 import { SerialMessage } from './types/SerialMessage';
 
 // Shared timestamp for demo log generation — reset on each regenerate call
@@ -134,6 +135,8 @@ export default function Home() {
   const [focusLogs, setFocusLogs] = useState<SerialMessage[]>([]);
   const [mainList] = useState(() => createLineList(setLogs));
   const [focusList] = useState(() => createLineList(setFocusLogs));
+  const mainRows = useTerminalRows(logs);
+  const focusRows = useTerminalRows(focusLogs);
   const [selectedMainLineId, setSelectedMainLineId] = useState<number | null>(null);
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
@@ -505,7 +508,7 @@ export default function Home() {
                     </Box>
                   )}
                   <SerialTerminal
-                    serial_messages={logs}
+                    rows={mainRows}
                     listRef={listRefMain}
                     onScroll={(event) => handleScroll(event, isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
                     selectedLineId={selectedMainLineId}
@@ -584,7 +587,7 @@ export default function Home() {
                   </ToolbarButton>
                 </Box>
                 <SerialTerminal
-                  serial_messages={focusLogs}
+                  rows={focusRows}
                   listRef={listRefFocus}
                   onScroll={(event) => handleScroll(event, isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
                   onClickRow={onClickFocusLogs}

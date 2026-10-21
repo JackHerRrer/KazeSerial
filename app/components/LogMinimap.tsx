@@ -7,7 +7,7 @@ import { MARKER_COLOR } from './SerialTerminalLine';
 import { type RowSearch } from './SerialTerminal';
 import { SerialMessage } from '../types/SerialMessage';
 import { lineRanges, unescapeHtml } from '../utils/search';
-import { rowCount, rowLines, type TerminalRows } from '../utils/terminalRows';
+import { type TerminalRows } from '../utils/terminalRows';
 
 // Width of the minimap, in px
 export const MINIMAP_WIDTH = 80;
@@ -141,10 +141,10 @@ const LogMinimap: React.FC<LogMinimapProps> = ({ ref, rows, listApiRef, rowHeigh
 
     const { offset, sliderTop, sliderHeight } = minimapGeometry(list, height, ratio);
     const first = Math.max(0, Math.floor(offset / MINIMAP_ROW_HEIGHT));
-    const last = Math.min(rowCount(rows) - 1, Math.ceil((offset + height) / MINIMAP_ROW_HEIGHT));
+    const last = Math.min(rows.count - 1, Math.ceil((offset + height) / MINIMAP_ROW_HEIGHT));
     const xOf = (character: number) => MINIMAP_LEFT_PADDING + character * MINIMAP_CHAR_WIDTH;
 
-    const indices = rowLines(rows, first, last);
+    const indices = rows.lineIndices(first, last);
     for (let row = first; row <= last; row++) {
       const index = indices[row - first];
       const line = rows.lines[index];

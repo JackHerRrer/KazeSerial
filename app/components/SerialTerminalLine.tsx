@@ -7,7 +7,7 @@ import Typography from '@mui/material/Typography';
 import { type Arrival, type LineNumbers, type RowSearch, type Timestamps } from "./SerialTerminal";
 import { domRanges, highlightNamed, lineRanges } from "../utils/search";
 import { formatTimestamp, isTimestampShown, timestampColumnText } from "../utils/timestamp";
-import { lineOf, type TerminalRows } from "../utils/terminalRows";
+import { type TerminalRows } from "../utils/terminalRows";
 
 const SELECTED_ROW_BACKGROUND = 'rgba(255,255,255,0.12)';
 // Row under the pointer: lighter than the selection, layered over the row background
@@ -38,7 +38,7 @@ export default function RowComponent({
   search?: RowSearch;
 }>) {
   // Index of the line in the log, as rows skip the hidden lines
-  const index = lineOf(rows, row);
+  const index = rows.lineOf(row);
   const line = rows.lines[index];
   const rowRef = useRef<HTMLDivElement>(null);
   const arrivalMs = arrival?.durationMs;
