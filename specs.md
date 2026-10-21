@@ -65,7 +65,7 @@ A circular toggle button (36×36px, MUI `IconButton`) straddles the top border o
 When the focus panel is closed, the Main Terminal wrapper takes `flex: 1` to fill all available space above the "focus" label. When open, the wrapper uses `display: contents` so it is transparent to the flex layout and the Resizable component behaves as a direct child of the Container.
 
 ### Settings pane (right, collapsible)
-A **Control Panel** made of two tabbed areas: the **source tabs** at the top (data source selection) and the **settings tabs** below (highlight rules and configuration). See [Control Panel](#control-panel) for details. It is resizable from its **left edge** via `re-resizable` (default width ~30%, min 220px, max 70%) and can be collapsed to a thin strip.
+A **Control Panel** made of two tabs: **Config** (data source selection and application settings) and **Highlight** (highlight rules). See [Control Panel](#control-panel) for details. It is resizable from its **left edge** via `re-resizable` (default width ~30%, min 220px, max 70%) and can be collapsed to a thin strip.
 
 #### Settings panel collapse button
 A circular toggle button (36×36px) is positioned absolutely on the **right border** of the terminals pane (`right: -18px`, `top: 50%`), straddling the boundary between the two panes. It uses:
@@ -209,9 +209,17 @@ type SerialMessage = {
 
 ## Control Panel
 
-A panel on the right side split into two areas, each with its own row of full-width tabs (MUI `Tabs`).
+A panel on the right side with a row of full-width tabs (MUI `Tabs`). The tabs occupy the full height of the panel, and the content of the active tab scrolls vertically.
 
-### Source tabs (top)
+| Tab | Content |
+|---|---|
+| **Config** (default) | The source tabs at the top, then the application settings below, see [Config tab](#config-tab) |
+| **Highlight** | The `HighLighSettings` rules table, see [Highlight Settings Component](#highlight-settings-component) |
+
+### Config tab
+Two parts, scrolling together: the **source tabs** at the top, with their own row of full-width tabs, and the **application settings** below.
+
+#### Source tabs
 Select the data source.
 
 | Tab | Content |
@@ -219,14 +227,14 @@ Select the data source.
 | **Serial** (default) | Serial port configuration, see below |
 | **File** | File follow (`tail -f`), see below |
 
-#### Serial tab
+##### Serial tab
 Serial port configuration:
 - **Port selector** — dropdown listing available ports with auto-detection on mount. Each entry shows `portName - deviceLabel` (manufacturer + product name for USB, or generic label). A refresh button re-lists ports.
 - **Baud rate selector** — dropdown with values: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600. Default: 115200.
 - **Connect / Disconnect button** — on the same row as the baud rate selector. Calls `open_port` or `close_port` Tauri command. The button state (`isConnected`) is set to `true` only in the `.then()` callback of `open_port`, and to `false` in the `.then()` callback of `close_port` or upon receiving a `serial-disconnected` event. This ensures the button accurately reflects the actual connection state even when the port is lost unexpectedly. The **Auto-reconnect serial port** setting of the [Config tab](#config-tab) is passed to `open_port` on Connect.
 - **Waiting status** — with auto-reconnect, when the port is lost, the button stays on **Disconnect** (which cancels the wait) and a warning caption *Port lost, waiting for it to come back…* is shown until `serial-reconnected` is received; the port it carries is then selected, as a USB device may come back under another name.
 
-#### File tab
+##### File tab
 `FileSettings` component, two rows:
 1. **Select button** (folder icon) and **File field**:
    - **Select button** — opens a file picker and shows the chosen path in the field. It neither opens nor follows the file.
@@ -237,15 +245,7 @@ Serial port configuration:
 
 Open and Follow are disabled until a file is chosen. While following, the select button, the file field and Open are disabled (following would keep appending to an opened file). See [File Follow](#file-follow-tail--f) for the backend behavior.
 
-### Settings tabs (bottom, scrollable)
-Occupy the remaining height of the panel. The content of the active tab scrolls vertically.
-
-| Tab | Content |
-|---|---|
-| **Highlight** (default) | The `HighLighSettings` rules table, see [Highlight Settings Component](#highlight-settings-component) |
-| **Config** | Application settings, see below |
-
-#### Config tab
+#### Application settings
 `ConfigSettings` component, a list of application settings:
 
 | Setting | Default | Effect |
@@ -269,8 +269,8 @@ Settings are held in `page.tsx` through the `useAppConfig` hook, and saved to `a
 
 ### Tab behavior
 - **Inactive tabs stay mounted**: they are only hidden, so switching tabs keeps their internal state (open serial connection, loaded highlight rules).
-- **Stable source area height**: the source tab panels are stacked in the same CSS grid cell, and only the active one is visible (`visibility: hidden` on the others). The source area always takes the height of its tallest tab, so the settings area does not move when switching source tabs, even to an empty one.
-- **Settings tabs** use `display: none` for inactive panels, since the settings area fills the remaining height anyway.
+- **Stable source area height**: the source tab panels are stacked in the same CSS grid cell, and only the active one is visible (`visibility: hidden` on the others). The source area always takes the height of its tallest tab, so the application settings do not move when switching source tabs, even to an empty one.
+- **Config and Highlight tabs** use `display: none` for the inactive panel, since the active one fills the height of the panel anyway.
 
 ---
 
