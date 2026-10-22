@@ -10,22 +10,12 @@ import HighLighSettings from './HighLighSettings';
 import ConfigSettings from './ConfigSettings';
 import { AppConfig } from '../types/AppConfig';
 
-type MainTab = 'config' | 'highlight';
+type MainTab = 'source' | 'highlight' | 'config';
 type SourceTab = 'serial' | 'file';
 
 // Panels stay mounted when inactive so their internal state (connection, rules...) is preserved
 const TabPanel: React.FC<{ active: boolean; children?: React.ReactNode; sx?: object }> = ({ active, children, sx }) => (
   <Box role="tabpanel" hidden={!active} sx={{ display: active ? 'block' : 'none', ...sx }}>
-    {children}
-  </Box>
-);
-
-const SourcePanel: React.FC<{ active: boolean; children?: React.ReactNode }> = ({ active, children }) => (
-  <Box
-    role="tabpanel"
-    aria-hidden={!active}
-    sx={{ gridArea: '1 / 1', p: 3, minWidth: 0, visibility: active ? 'visible' : 'hidden' }}
-  >
     {children}
   </Box>
 );
@@ -36,7 +26,7 @@ interface ControlPanelProps {
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({ config, onConfigChange }) => {
-  const [mainTab, setMainTab] = useState<MainTab>('config');
+  const [mainTab, setMainTab] = useState<MainTab>('source');
   const [sourceTab, setSourceTab] = useState<SourceTab>('serial');
 
   return (
@@ -47,36 +37,38 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ config, onConfigChange }) =
         variant="fullWidth"
         sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}
       >
-        <Tab label="Config" value="config" />
+        <Tab label="Source" value="source" />
         <Tab label="Highlight" value="highlight" />
+        <Tab label="Config" value="config" />
       </Tabs>
-      <TabPanel active={mainTab === 'config'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-          <Tabs
-            value={sourceTab}
-            onChange={(_, value: SourceTab) => setSourceTab(value)}
-            variant="fullWidth"
-            sx={{ borderBottom: 1, borderColor: 'divider' }}
-          >
-            <Tab label="Serial" value="serial" />
-            <Tab label="File" value="file" />
-          </Tabs>
-          {/* Source panels are stacked in the same grid cell so the area keeps the height of the tallest one */}
-          <Box sx={{ display: 'grid' }}>
-            <SourcePanel active={sourceTab === 'serial'}>
-              <SerialSettings autoReconnect={config.autoReconnect} />
-            </SourcePanel>
-            <SourcePanel active={sourceTab === 'file'}>
-              <FileSettings />
-            </SourcePanel>
-          </Box>
-        </Box>
-        <Box sx={{ p: 3 }}>
-          <ConfigSettings config={config} onConfigChange={onConfigChange} />
-        </Box>
+      <TabPanel active={mainTab === 'source'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        <Tabs
+          value={sourceTab}
+          onChange={(_, value: SourceTab) => setSourceTab(value)}
+          // Smaller and aligned on the left so they read as secondary to the main tabs; the tab padding
+          // brings their labels in line with the panel content
+          sx={{
+            px: 1.5,
+            pt: 1,
+            minHeight: 36,
+            '& .MuiTab-root': { minHeight: 36, minWidth: 0, px: 1.5, py: 0.5, fontSize: '0.8125rem' },
+          }}
+        >
+          <Tab label="Serial" value="serial" />
+          <Tab label="File" value="file" />
+        </Tabs>
+        <TabPanel active={sourceTab === 'serial'} sx={{ p: 3 }}>
+          <SerialSettings autoReconnect={config.autoReconnect} />
+        </TabPanel>
+        <TabPanel active={sourceTab === 'file'} sx={{ p: 3 }}>
+          <FileSettings />
+        </TabPanel>
       </TabPanel>
       <TabPanel active={mainTab === 'highlight'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>
         <HighLighSettings />
+      </TabPanel>
+      <TabPanel active={mainTab === 'config'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>
+        <ConfigSettings config={config} onConfigChange={onConfigChange} />
       </TabPanel>
     </Box>
   );

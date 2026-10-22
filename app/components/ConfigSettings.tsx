@@ -8,9 +8,9 @@ import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
-import Divider from '@mui/material/Divider';
 import McpSettings from './McpSettings';
 import ColorPickerButton from './ColorPickerButton';
+import SectionTitle from './SectionTitle';
 import Tooltip from '@mui/material/Tooltip';
 import type { SxProps, Theme } from '@mui/material/styles';
 import { invoke } from '@tauri-apps/api/core';
@@ -104,6 +104,7 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+      <SectionTitle>Display</SectionTitle>
       {checkbox('Show line numbers', 'showLineNumbers')}
       {checkbox('Show minimap', 'showMinimap')}
       {checkbox('Show timestamps', 'showTimestamps')}
@@ -164,8 +165,9 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           </span>
         </Tooltip>
       </Box>
-      {checkbox('Auto-reconnect serial port', 'autoReconnect', { sx: { pt: 1 } })}
-      <Divider sx={{ my: 2 }} />
+      <SectionTitle sx={{ mt: 2 }}>Serial</SectionTitle>
+      {checkbox('Auto-reconnect serial port', 'autoReconnect')}
+      <SectionTitle sx={{ mt: 2 }}>Log files</SectionTitle>
       {checkbox('Save logs to files', 'logFileEnabled')}
       <Typography variant="caption" sx={{ pl: 4, pb: 1, color: 'text.secondary' }}>
         Lines received from and sent to the serial port, system messages and markers, as Save writes them. A new file on each connection.
@@ -210,7 +212,7 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           onChange={(logFileMaxLines) => onConfigChange({ logFileMaxLines })}
         />
       </Box>
-      <Divider sx={{ my: 2 }} />
+      <SectionTitle sx={{ mt: 2 }}>MCP server</SectionTitle>
       <McpSettings port={config.mcpPort} onPortChange={(mcpPort) => onConfigChange({ mcpPort })} />
     </Box>
   );
