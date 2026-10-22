@@ -226,11 +226,17 @@ const LogMinimap: React.FC<LogMinimapProps> = ({ ref, rows, listApiRef, rowHeigh
     const pointer = pointerGeometry(event);
     if (!pointer) return;
     const { list } = pointer;
+    let startScrollTop = list.scrollTop;
     if (!pointer.isOnSlider) {
-      list.scrollTo({ top: (pointer.y + pointer.geometry.offset) / ratio - list.clientHeight / 2 });
+      // The drag starts from the requested scroll, not from `scrollTop` read back: a webview may
+      // apply the scroll later, and the first pointer move would then scroll back near the old position
+      const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+      const top = (pointer.y + pointer.geometry.offset) / ratio - list.clientHeight / 2;
+      startScrollTop = Math.min(maxScroll, Math.max(0, top));
+      list.scrollTo({ top: startScrollTop, behavior: 'instant' });
     }
     const { dragScale } = minimapGeometry(list, event.currentTarget.clientHeight, ratio);
-    dragRef.current = { startY: event.clientY, startScrollTop: list.scrollTop, scale: dragScale };
+    dragRef.current = { startY: event.clientY, startScrollTop, scale: dragScale };
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     scheduleDraw();
@@ -240,7 +246,7 @@ const LogMinimap: React.FC<LogMinimapProps> = ({ ref, rows, listApiRef, rowHeigh
     const drag = dragRef.current;
     const list = listApiRef.current?.element;
     if (drag && list) {
-      list.scrollTo({ top: drag.startScrollTop + (event.clientY - drag.startY) * drag.scale });
+      list.scrollTo({ top: drag.startScrollTop + (event.clientY - drag.startY) * drag.scale, behavior: 'instant' });
       return;
     }
     const isOnSlider = pointerGeometry(event)?.isOnSlider ?? false;
