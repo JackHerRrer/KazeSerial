@@ -627,7 +627,8 @@ const HighLighSettings: React.FC = () => {
                                             </IconButton>
                                         </Box>
                                     </TableCell>
-                                    <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>
+                                    {/* Little bottom padding when the advanced row follows, to keep the two rows close */}
+                                    <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH, ...(filter.advanced && { pb: '2px' }) }}>
                                         <TextField
                                             size="small"
                                             placeholder="Filter text"
@@ -777,7 +778,7 @@ const HighLighSettings: React.FC = () => {
                                         />
                                         <TableCell
                                             colSpan={8}
-                                            sx={{ p: 0.5, pl: 4 }}
+                                            sx={{ p: 0.5, pt: 0, pl: 4 }}
                                         >
                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
                                                 <SubdirectoryArrowRightIcon sx={{ color: 'text.disabled', fontSize: '1.1rem', mr: 0.5 }} />

@@ -342,6 +342,7 @@ Every option cell has a MUI `Tooltip` (placement `top`, with arrow). Each toolti
 When a rule has both `is_regex = true` and `advanced = true`, a single child row appears below the parent row:
 
 - The parent row's bottom border is hidden; the child row shows the bottom border
+- The two rows are kept close: the Search cell of the parent row has a 2px bottom padding, and the child row no top padding
 - The child row contains a horizontal list of **selections**, each consisting of:
   - A color picker (`ColorPickerButton`)
   - A text field (width 55px) for capture group numbers (e.g. `1,2`)
