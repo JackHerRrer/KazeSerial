@@ -310,7 +310,7 @@ Each row represents one rule. Columns (left to right):
 | Column | Width | Description |
 |---|---|---|
 | Drag handle | 28px | `DragIndicatorIcon`, draggable for reordering |
-| Search | min 180px | Text input for the pattern. Turns red (MUI `error` state) when `Regexp` is checked and the pattern is not a valid regex |
+| Search | min 180px | Text input for the pattern, with a tighter padding than the MUI small size (4px top, 1px bottom, 8px horizontal) to keep the rows short; the smaller bottom padding makes text without descenders look centered. Turns red (MUI `error` state) when `Regexp` is checked and the pattern is not a valid regex |
 | Color | 36px | `ColorPickerButton`: a swatch opening a Sketch color picker with preset colors |
 | Case sens. | 36px | Checkbox — match with case sensitivity (default: checked) |
 | Regexp | 36px | Checkbox — treat search text as regex |

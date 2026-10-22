@@ -635,6 +635,9 @@ const HighLighSettings: React.FC = () => {
                                             onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
                                             fullWidth
                                             error={isInvalidRegex(filter.text, filter.is_regex)}
+                                            // Tighter padding than the small size so the rules take less height, a bit less at the bottom so the
+                                            // text, mostly without descenders, looks centered
+                                            sx={{ '& .MuiInputBase-input': { pt: 0.5, pb: '1px', px: 1 } }}
                                         />
                                     </TableCell>
                                     <TableCell
