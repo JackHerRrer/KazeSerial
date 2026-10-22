@@ -5,6 +5,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import Checkbox from '@mui/material/Checkbox';
+import Divider from '@mui/material/Divider';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
@@ -165,9 +166,11 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           </span>
         </Tooltip>
       </Box>
-      <SectionTitle sx={{ mt: 2 }}>Serial</SectionTitle>
+      <Divider sx={{ my: 1.5 }} />
+      <SectionTitle>Serial</SectionTitle>
       {checkbox('Auto-reconnect serial port', 'autoReconnect')}
-      <SectionTitle sx={{ mt: 2 }}>Log files</SectionTitle>
+      <Divider sx={{ my: 1.5 }} />
+      <SectionTitle>Log files</SectionTitle>
       {checkbox('Save logs to files', 'logFileEnabled')}
       <Typography variant="caption" sx={{ pl: 4, pb: 1, color: 'text.secondary' }}>
         Lines received from and sent to the serial port, system messages and markers, as Save writes them. A new file on each connection.
@@ -212,7 +215,8 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
           onChange={(logFileMaxLines) => onConfigChange({ logFileMaxLines })}
         />
       </Box>
-      <SectionTitle sx={{ mt: 2 }}>MCP server</SectionTitle>
+      <Divider sx={{ my: 1.5 }} />
+      <SectionTitle>MCP server</SectionTitle>
       <McpSettings port={config.mcpPort} onPortChange={(mcpPort) => onConfigChange({ mcpPort })} />
     </Box>
   );
