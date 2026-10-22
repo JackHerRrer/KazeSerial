@@ -168,7 +168,7 @@ const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange 
       <Divider sx={{ my: 2 }} />
       {checkbox('Save logs to files', 'logFileEnabled')}
       <Typography variant="caption" sx={{ pl: 4, pb: 1, color: 'text.secondary' }}>
-        Lines received from the serial port, system messages and markers, as Save writes them. A new file on each connection.
+        Lines received from and sent to the serial port, system messages and markers, as Save writes them. A new file on each connection.
       </Typography>
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, pl: 3 }}>
         <TextField

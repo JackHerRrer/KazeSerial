@@ -47,6 +47,7 @@ A vertical flex column containing:
      - **More** (three-dot icon, rightmost) — dropdown menu with demo utilities:
        - *Demo - Append 10k logs*
        - *Demo - Regenerate logs*
+   - [Send bar](#send-bar) at the bottom, under the log
 
 2. **"focus" label** — small monospace label with top border, always visible even when the focus panel is collapsed
 
@@ -155,6 +156,15 @@ A marker is a numbered line inserted by the user to delimit a part of the log, e
 - **Style**: bold violet text (`#c586c0`) on a light tint of it (`rgba(197,134,192,0.12)`), unless the row is selected.
 - **Behavior**: a marker is not processed by the highlight rules (`marker_payload`, text HTML-escaped). It is flagged `matched`, so it also appears in the focus terminal and delimits the focus lines. It is recorded in the log store (visible to MCP clients) and written by Save like any line. Refresh keeps markers as markers: the log store records the marker flag. To go back to a marker, search for `MARK`.
 
+### Send bar
+`SendBar` component, under the main terminal, sends text to the serial port.
+
+- **Layout** (left to right): monospace text field, **line ending** select (`None`, `LF`, `CR`, `CRLF`, default `LF`, saved as `sendLineEnding` in `app_config.json`), **Send** button (send icon).
+- **Sending**: Enter or the Send button calls `send_serial` with the text, sent as is (UTF-8, no escape sequences), followed by the chosen line ending. An empty text sends the line ending alone, e.g. to get a prompt back. The field is cleared once sent; on failure the text is kept to send it again, and the failure is shown in the log as a [system message](#system-messages).
+- **History**: Up / Down recall the texts sent since launch (at most 100, kept in memory only, an empty text or the same text as the previous one is not added), as in a shell. Down past the most recent text restores the text being edited.
+- **Connection**: the bar is enabled only while the serial port is open, following the `serial-connection` event; otherwise it is disabled and shows `Not connected` (no port, file opened or followed, port lost and waiting to come back).
+- **Sent lines**: each text sent is appended to the log as `>> {text}` (`sent_payload`) just before it is written to the port, so the reply of the device comes after it. Like a [marker](#markers), it is not processed by the highlight rules (text HTML-escaped), is flagged `matched` so it also appears in the focus terminal, is recorded in the log store (visible to MCP clients) and written to the [log files](#log-files), and Refresh keeps it as a sent line (the log store records the sent flag). Shown in teal (`#4ec9b0`).
+
 ### Minimap
 Enabled by the **Show minimap** setting of the [Config tab](#config-tab) (on by default). Like in VS Code, an 80px wide overview of the main log on the right edge of the main terminal (`LogMinimap`).
 
@@ -202,6 +212,7 @@ type SerialMessage = {
   timestamp?: number | null; // reception time in ms since the Unix epoch, null when unknown (opened file)
   arrivedAt?: number;   // frontend time an appended line was added to the view, for the new line highlight
   marker?: boolean;     // marker line inserted by the user (Ctrl+M)
+  sent?: boolean;       // text sent to the serial port by the user, see Send bar
 };
 ```
 
@@ -397,6 +408,7 @@ Default color for new rules: `#cc7f12`. New rules default to `is_regex: false`, 
 ```rust
 struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    serial_writer: Arc<Mutex<Option<Box<dyn SerialPort>>>>, // clone of the open port, to send without waiting for the read loop
     highlights: Arc<Mutex<Arc<Vec<HighlightSettings>>>>, // replaced as a whole, so each line only clones the Arc
     message_id_counter: Arc<AtomicU64>,
     marker_counter: Arc<AtomicU64>,    // number of the last marker inserted
@@ -445,8 +457,13 @@ Every `open_port` and `close_port` increments `serial_session`. A waiting loop s
 
 `port_description` is optional — if omitted, the description part is empty.
 
+Whenever the port is opened (Connect or auto-reconnect), a clone of it (`try_clone`) is kept in `serial_writer` to send to it: the read loop holds `serial_connection` across its blocking reads, so a send through it could wait up to 200 ms. Whenever the port is opened, lost or closed, `serial_writer` and `serial_connected` are updated and `serial-connection` is emitted (`set_serial_open`).
+
 #### `close_port()`
 Drops the serial port connection. Emits a system message: `[HH:MM:SS] KazeSerial: Connection closed`.
+
+#### `send_serial(text, line_ending)`
+Sends `text` followed by `line_ending` (`"none"`, `"lf"`, `"cr"` or `"crlf"`) to the serial port, for the [send bar](#send-bar). Without an open port, returns an error. Otherwise appends the sent line `>> {text}` to the log with `publish_one`, then writes the bytes through `serial_writer` (`write_all` then `flush`, in `spawn_blocking`). A failure is returned as an error and shown as the system message `Send failed: {error}`.
 
 #### `set_highlights(highlights: Vec<HighlightMessage>)`
 Compiles and stores highlight rules. Validates regexes (invalid rules are skipped). Converts the `advanced_selections` field into `AdvancedSelectionSetting` structs (parsing comma-separated group numbers).
@@ -541,6 +558,7 @@ struct Payload {
     removed_line: bool,
     timestamp: Option<u64>, // reception time in ms since the Unix epoch, None when unknown
     marker: bool,           // marker line, see Markers
+    sent: bool,             // text sent to the serial port, see Send bar
 }
 ```
 
@@ -593,6 +611,7 @@ Format: `[HH:MM:SS] KazeSerial: {message}` where the time is the local time of t
 | MCP server started | `MCP server listening on {url}` |
 | MCP server stopped | `MCP server stopped` |
 | Writing a [log file](#log-files) failed (once, until writing resumes) | `Log file error: {error}` |
+| Sending to the serial port failed (or no port open) | `Send failed: {error}` |
 
 Implemented via `emit_system_msg(app, msg)` which allocates a message ID from the shared counter, processes the line with `process_line`, records it in the log store and emits a `serial-data` event.
 
@@ -610,7 +629,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 | Clear button / Ctrl+Shift+R (`clear_logs` command) | clear |
 | MCP `clear_logs` tool (then `logs-cleared`) | clear |
 
-- Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), its `focus` / `removed` flags, its timestamp and its marker flag. Refresh reprocesses the lines from here.
+- Each record holds the line `id`, its **raw text** (`rawline`, or `message` when absent, never HTML), its `focus` / `removed` flags, its timestamp and its marker and sent flags. Refresh reprocesses the lines from here.
 - It is a ring buffer: past the capacity (default **500 000** lines, `KAZESERIAL_LOG_CAPACITY` to override), the oldest lines are evicted and counted as dropped.
 - It tracks the current source: `none`, `serial`, `file` (opened once with `open_file`) or `file_watch` (followed).
 - Records are in log order. Ids increase along the log, except for a marker inserted above a line, whose new id is larger than the ids around it; `wait_for_logs` and `wait_for_pattern` walk records in id order. While the records are in id order (no marker inserted since the last clear or replace), the records newer than an id are found by binary search, instead of scanning the whole log on every new line.
@@ -622,7 +641,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 
 Automatic save of the serial log to files (`log_file.rs`, `LogFiles` in `AppState`), set in the [Config tab](#config-tab). Written by the backend as lines are published, so nothing is lost when the webview is busy.
 
-- **Lines written**: the lines published one by one with `publish_one`, which are the lines received from the serial port (non-ASCII bytes included, as their hex strings), the [system messages](#system-messages) and the markers appended at the end of the log (Ctrl+M, toolbar button). Lines of an opened or followed file (already on disk), demo lines and markers [inserted above a line](#markers) (the file is never rewritten) are not written. Clearing the logs or Refresh does not change the files.
+- **Lines written**: the lines published one by one with `publish_one`, which are the lines received from the serial port (non-ASCII bytes included, as their hex strings), the [system messages](#system-messages), the markers appended at the end of the log (Ctrl+M, toolbar button) and the [sent lines](#send-bar). Lines of an opened or followed file (already on disk), demo lines and markers [inserted above a line](#markers) (the file is never rewritten) are not written. Clearing the logs or Refresh does not change the files.
 - **Sessions**: each successful `open_port` starts a session, so the next line opens a new file; an automatic reconnection continues the same file. Nothing is written before the first connection since launch (no file holding only e.g. `MCP server listening`). After a disconnection, lines (system messages, markers) still go to the last file.
 - **Folder**: the chosen folder, or by default `KazeSerial/logs` in the user data folder (`app.path().data_dir()`: `~/.local/share/KazeSerial/logs` on Linux, `%APPDATA%\KazeSerial\logs` on Windows). The installation folder is not used, as it is usually read-only (`.deb`, `.msi`, AppImage). The folder is created when missing.
 - **File names**: `kazeserial_YYYY-MM-DD_HH-mm-ss.log`, the local time the file is created, with a `_2`, `_3`... suffix when the name is taken (files created within the same second).
@@ -677,6 +696,7 @@ Line ids are stable within a session and never reused. They give the order in wh
 | `mcp-add-highlight` | rule (`HighlightRule`, persisted rule shape) | Emitted by the MCP `add_highlight` tool. The Highlight tab appends the rule. |
 | `serial-disconnected` | *(empty)* | Emitted when the read loop exits due to a hardware I/O error (device unplugged) without auto-reconnect. The frontend listens to this event to reset the Connect button to its disconnected state. |
 | `serial-reconnecting` | *(empty)* | Emitted when the port is lost with auto-reconnect: the backend waits for it to come back. The Serial tab shows a waiting caption. |
+| `serial-connection` | `boolean` | Emitted whenever the serial port is opened, lost or closed, with whether it is open now. The main page enables the [send bar](#send-bar) only while it is open. |
 | `serial-reconnected` | `string` (port name) | Emitted when auto-reconnect reopened the port, possibly under another name. The Serial tab hides the waiting caption, selects that port and lists the ports again. |
 
 ---
@@ -698,6 +718,7 @@ app/
     HighLighSettings.tsx     — Highlight/filter rules table
     ColorPickerButton.tsx    — Color swatch opening a Sketch picker (rules, new line highlight)
     SearchBar.tsx            — Search bar of the main terminal
+    SendBar.tsx              — Send bar under the main terminal
     ConfigSettings.tsx       — Application settings (Config tab)
     McpSettings.tsx          — MCP server switch and port (Config tab)
   hooks/

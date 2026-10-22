@@ -1,5 +1,8 @@
 import { DEFAULT_TIMESTAMP_FORMAT } from '../utils/timestamp';
 
+// Line ending appended to a text sent to the serial port
+export type LineEnding = 'none' | 'lf' | 'cr' | 'crlf';
+
 // Application settings edited in the Config tab, persisted to AppConfig/app_config.json
 export type AppConfig = {
   showLineNumbers: boolean;
@@ -28,6 +31,8 @@ export type AppConfig = {
   logFileRotation: boolean;
   logFileMaxFiles: number;
   logFileMaxLines: number;
+  // Chosen in the send bar under the main terminal
+  sendLineEnding: LineEnding;
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -48,4 +53,5 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   logFileRotation: true,
   logFileMaxFiles: 10,
   logFileMaxLines: 10000,
+  sendLineEnding: 'lf',
 };

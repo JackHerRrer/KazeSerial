@@ -39,6 +39,8 @@ pub struct LogRecord {
     pub timestamp: Option<u64>,
     /// Marker line inserted by the user, kept as a marker by a Refresh.
     pub marker: bool,
+    /// Text sent to the serial port by the user, kept as such by a Refresh.
+    pub sent: bool,
 }
 
 /// Where the currently displayed lines came from.
@@ -497,6 +499,7 @@ mod tests {
             removed: false,
             timestamp: None,
             marker: false,
+            sent: false,
         }
     }
 

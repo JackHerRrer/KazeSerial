@@ -15,6 +15,8 @@ const HOVERED_ROW_BACKGROUND = 'rgba(255,255,255,0.06)';
 // Marker lines: text color, and a light tint of it as row background
 export const MARKER_COLOR = '#c586c0';
 const MARKER_BACKGROUND = 'rgba(197,134,192,0.12)';
+// Lines of the texts sent to the serial port: text color
+const SENT_COLOR = '#4ec9b0';
 
 export default function RowComponent({
   index: row,
@@ -158,7 +160,7 @@ export default function RowComponent({
         sx={{
           fontFamily: 'monospace',
           fontSize: '0.875rem',
-          color: line.marker ? MARKER_COLOR : '#d4d4d4',
+          color: line.marker ? MARKER_COLOR : line.sent ? SENT_COLOR : '#d4d4d4',
           fontWeight: line.marker ? 'bold' : undefined,
           lineHeight: 1.2,
         }}

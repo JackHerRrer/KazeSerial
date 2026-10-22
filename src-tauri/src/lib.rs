@@ -85,6 +85,8 @@ struct Payload {
     timestamp: Option<u64>,
     /// Marker line inserted by the user to delimit a part of the log, see [`marker_payload`].
     marker: bool,
+    /// Text sent to the serial port by the user, see [`sent_payload`].
+    sent: bool,
 }
 
 /// Marker line: shown as is, not processed by the highlight rules, and listed in the focus panel
@@ -98,6 +100,26 @@ fn marker_payload(text: String, id: u64, timestamp: Option<u64>) -> Payload {
         removed_line: false,
         timestamp,
         marker: true,
+        sent: false,
+    }
+}
+
+/// Prefix of the line recording a text sent to the serial port, e.g. `>> AT+RST`.
+const SENT_PREFIX: &str = ">> ";
+
+/// Line recording a text sent to the serial port (`line` includes [`SENT_PREFIX`]): shown as
+/// is, not processed by the highlight rules, and listed in the focus panel too so the focus
+/// lines can be read against the commands sent.
+fn sent_payload(line: String, id: u64, timestamp: Option<u64>) -> Payload {
+    Payload {
+        id,
+        message: html_escape(&line),
+        matched: true,
+        rawline: Some(line),
+        removed_line: false,
+        timestamp,
+        marker: false,
+        sent: true,
     }
 }
 
@@ -136,6 +158,9 @@ struct SerialPortEntry {
 #[derive(Clone)]
 struct AppState {
     serial_connection: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    /// Clone of the open serial port used to send to it, so a send does not wait for the read
+    /// loop, which holds `serial_connection` across blocking reads.
+    serial_writer: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
     /// Replaced as a whole by `set_highlights`, so each line only clones the `Arc`.
     highlights: Arc<Mutex<Arc<Vec<HighlightSettings>>>>,
     message_id_counter: Arc<AtomicU64>,
@@ -169,6 +194,7 @@ impl AppState {
     fn new() -> Self {
         Self {
             serial_connection: Arc::new(Mutex::new(None)),
+            serial_writer: Arc::new(Mutex::new(None)),
             highlights: Default::default(),
             message_id_counter: Arc::new(AtomicU64::new(1)),
             marker_counter: Arc::new(AtomicU64::new(0)),
@@ -212,6 +238,7 @@ fn record_of(payload: &Payload) -> LogRecord {
         removed: payload.removed_line,
         timestamp: payload.timestamp,
         marker: payload.marker,
+        sent: payload.sent,
     }
 }
 
@@ -587,6 +614,7 @@ fn process_line(
         removed_line,
         timestamp,
         marker: false,
+        sent: false,
     }
 }
 
@@ -607,17 +635,19 @@ async fn add_logs_line(lines: Vec<String>, emitter: tauri::AppHandle) -> Result<
 }
 
 /// Processes a recorded line again through `highlights`, keeping its id, reception time and
-/// marker flag.
+/// marker and sent flags.
 fn reprocess(record: LogRecord, highlights: &[HighlightSettings]) -> Payload {
     if record.marker {
         marker_payload(record.text, record.id, record.timestamp)
+    } else if record.sent {
+        sent_payload(record.text, record.id, record.timestamp)
     } else {
         process_line(record.text, highlights, record.id, record.timestamp)
     }
 }
 
 /// Re-applies the current highlight rules to the whole log, for the Refresh button and the MCP
-/// `refresh_logs` tool. Lines keep their id, reception time and marker flag.
+/// `refresh_logs` tool. Lines keep their id, reception time and marker and sent flags.
 ///
 /// The log store holds every line shown, so the lines are taken from it and processed in parallel
 /// without the publication lock: lines keep being received meanwhile. Under the lock, the lines
@@ -848,8 +878,8 @@ async fn connect(
     let session = state.serial_session.fetch_add(1, Ordering::SeqCst) + 1;
     match serialport::new(&port_name, baud_rate).timeout(SERIAL_READ_TIMEOUT).open() {
         Ok(port) => {
+            set_serial_open(app, true, writer_of(port.as_ref())).await;
             *state.serial_connection.lock().await = Some(port);
-            state.serial_connected.store(true, Ordering::SeqCst);
             // A new connection starts a new log file; an automatic reconnection continues it
             state
                 .log_files
@@ -901,6 +931,7 @@ async fn connect(
                                             removed_line: false,
                                             timestamp: Some(now_ms()),
                                             marker: false,
+                                            sent: false,
                                         },
                                     ).await;
                                     continue;
@@ -914,10 +945,7 @@ async fn connect(
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
                         Err(_) => {
-                            app_handle
-                                .state::<AppState>()
-                                .serial_connected
-                                .store(false, Ordering::SeqCst);
+                            set_serial_open(&app_handle, false, None).await;
                             if !auto_reconnect {
                                 emit_system_msg(
                                     &app_handle,
@@ -1058,8 +1086,8 @@ async fn wait_for_port(
             if state.serial_session.load(Ordering::SeqCst) != session {
                 return None;
             }
+            set_serial_open(app, true, writer_of(port.as_ref())).await;
             *connection = Some(port);
-            state.serial_connected.store(true, Ordering::SeqCst);
             return Some(name);
         }
     }
@@ -1069,9 +1097,91 @@ async fn wait_for_port(
 async fn close_port(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.serial_session.fetch_add(1, Ordering::SeqCst);
     *state.serial_connection.lock().await = None;
-    state.serial_connected.store(false, Ordering::SeqCst);
+    set_serial_open(&app, false, None).await;
     emit_system_msg(&app, "Connection closed".to_string()).await;
     Ok(())
+}
+
+/// Clone of the open `port` to send to it, see [`AppState::serial_writer`]. Without it, the
+/// port is still read but sending fails.
+fn writer_of(port: &dyn SerialPort) -> Option<Box<dyn SerialPort>> {
+    port.try_clone()
+        .inspect_err(|e| eprintln!("Unable to clone the serial port to send to it: {}", e))
+        .ok()
+}
+
+/// Records whether the serial port is open, with the `writer` to send to it, and emits
+/// `serial-connection` so the window enables its send bar only while the port is open.
+async fn set_serial_open(app: &AppHandle<impl Runtime>, open: bool, writer: Option<Box<dyn SerialPort>>) {
+    let state = app.state::<AppState>();
+    *state.serial_writer.lock().await = writer;
+    state.serial_connected.store(open, Ordering::SeqCst);
+    let _ = app.emit("serial-connection", open);
+}
+
+/// Line ending appended to a text sent to the serial port.
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LineEnding {
+    None,
+    Lf,
+    Cr,
+    Crlf,
+}
+
+impl LineEnding {
+    fn bytes(self) -> &'static [u8] {
+        match self {
+            LineEnding::None => b"",
+            LineEnding::Lf => b"\n",
+            LineEnding::Cr => b"\r",
+            LineEnding::Crlf => b"\r\n",
+        }
+    }
+}
+
+/// Sends `text` followed by `line_ending` to the serial port. The text is appended to the log
+/// first, as a sent line (see [`sent_payload`]), so the reply of the device comes after it.
+/// A failure is also reported in the log, as a system message.
+#[tauri::command]
+async fn send_serial(
+    text: String,
+    line_ending: LineEnding,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let result = write_serial(&app, &state, text, line_ending).await;
+    if let Err(error) = &result {
+        emit_system_msg(&app, format!("Send failed: {}", error)).await;
+    }
+    result
+}
+
+async fn write_serial(
+    app: &AppHandle<impl Runtime>,
+    state: &AppState,
+    text: String,
+    line_ending: LineEnding,
+) -> Result<(), String> {
+    if state.serial_writer.lock().await.is_none() {
+        return Err("not connected".to_string());
+    }
+    let id = state.message_id_counter.fetch_add(1, Ordering::SeqCst);
+    publish_one(app, sent_payload(format!("{}{}", SENT_PREFIX, text), id, Some(now_ms()))).await;
+
+    let mut bytes = text.into_bytes();
+    bytes.extend_from_slice(line_ending.bytes());
+    let writer = state.serial_writer.clone();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut writer = writer.blocking_lock();
+        let port = writer.as_mut().ok_or_else(|| "not connected".to_string())?;
+        port.write_all(&bytes)
+            .and_then(|_| port.flush())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Clears the log store when the user clears the main log, so MCP clients see the same log.
@@ -1323,6 +1433,7 @@ pub fn run() {
             list_ports,
             open_port,
             close_port,
+            send_serial,
             set_highlights,
             add_logs_line,
             append_logs_line,
@@ -1725,6 +1836,24 @@ mod process_line_tests {
     }
 
     #[test]
+    fn sent_line_is_escaped_and_listed_in_focus() {
+        let payload = sent_payload(">> <AT>".to_string(), 3, Some(7));
+        assert_eq!(payload.message, "&gt;&gt; &lt;AT&gt;");
+        assert_eq!(payload.rawline.as_deref(), Some(">> <AT>"));
+        assert!(payload.sent && payload.matched && !payload.marker && !payload.removed_line);
+        assert_eq!((payload.id, payload.timestamp), (3, Some(7)));
+    }
+
+    #[test]
+    fn line_endings_are_the_expected_bytes() {
+        let ending = |name: &str| serde_json::from_str::<LineEnding>(&format!("\"{name}\"")).unwrap().bytes();
+        assert_eq!(ending("none"), b"");
+        assert_eq!(ending("lf"), b"\n");
+        assert_eq!(ending("cr"), b"\r");
+        assert_eq!(ending("crlf"), b"\r\n");
+    }
+
+    #[test]
     fn timestamp_is_passed_through() {
         let settings: Vec<HighlightSettings> = Vec::new();
         assert_eq!(process_line("a".to_string(), &settings, 1, Some(42)).timestamp, Some(42));
@@ -1848,6 +1977,78 @@ mod refresh_tests {
                 (3, "----- MARK 1 -----", Some(8), true, true),
             ]);
             assert_eq!(*window.lock().unwrap(), vec![1, 2, 3]);
+        });
+    }
+
+    #[test]
+    fn refresh_keeps_sent_lines_out_of_the_rules() {
+        let (app, _window) = app_with_window();
+        let handle = app.handle().clone();
+        tauri::async_runtime::block_on(async move {
+            let state = handle.state::<AppState>();
+            publish_one(&handle, sent_payload(">> AT".into(), 1, Some(7))).await;
+            *state.highlights.lock().await = Arc::new(vec![build_highlight_settings(HighlightMessage {
+                text: "AT".into(),
+                color: "R".into(),
+                is_regex: false,
+                case_sensitive: true,
+                select_mode: HighlightSelectMode::Match,
+                advanced_selections: Vec::new(),
+                focus: false,
+                remove: true,
+            })
+            .unwrap()]);
+
+            refresh(&handle).await;
+
+            let records = state.log_store.map_records(LogRecord::clone).await;
+            let summary: Vec<_> = records.iter().map(|r| (r.text.as_str(), r.sent, r.focus, r.removed)).collect();
+            assert_eq!(summary, vec![(">> AT", true, true, false)]);
+        });
+    }
+}
+
+#[cfg(test)]
+mod send_tests {
+    use super::*;
+    use test_app::app_with_window;
+
+    #[test]
+    fn sending_without_open_port_fails_and_logs_nothing() {
+        let (app, window) = app_with_window();
+        let handle = app.handle().clone();
+        tauri::async_runtime::block_on(async move {
+            let state = handle.state::<AppState>();
+            let result = write_serial(&handle, &state, "AT".into(), LineEnding::Lf).await;
+            assert_eq!(result, Err("not connected".to_string()));
+            assert_eq!(state.log_store.map_records(|record| record.id).await, Vec::<u64>::new());
+            assert!(window.lock().unwrap().is_empty());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sent_text_is_written_with_its_line_ending_and_logged() {
+        use std::io::Read;
+        let (app, window) = app_with_window();
+        let handle = app.handle().clone();
+        let (mut device, port) = serialport::TTYPort::pair().unwrap();
+        device.set_timeout(std::time::Duration::from_secs(1)).unwrap();
+        tauri::async_runtime::block_on(async move {
+            let state = handle.state::<AppState>();
+            let port: Box<dyn SerialPort> = Box::new(port);
+            set_serial_open(&handle, true, writer_of(port.as_ref())).await;
+
+            write_serial(&handle, &state, "AT+RST".into(), LineEnding::Crlf).await.unwrap();
+
+            let mut received = [0u8; 8];
+            device.read_exact(&mut received).unwrap();
+            assert_eq!(&received, b"AT+RST\r\n");
+            let records = state.log_store.map_records(LogRecord::clone).await;
+            let summary: Vec<_> = records.iter().map(|r| (r.text.as_str(), r.sent, r.focus)).collect();
+            assert_eq!(summary, vec![(">> AT+RST", true, true)]);
+            assert_eq!(window.lock().unwrap().len(), 1);
+            drop(port);
         });
     }
 }

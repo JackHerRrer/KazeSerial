@@ -27,6 +27,7 @@ import { writeTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
 import ToolbarButton from './components/ToolbarButton';
 import SearchBar from './components/SearchBar';
+import SendBar from './components/SendBar';
 import { useLogSearch } from './hooks/useLogSearch';
 import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
 import { MINIMAP_WIDTH } from './components/LogMinimap';
@@ -143,6 +144,8 @@ export default function Home() {
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
   const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(null);
+  // The serial port is open, so text can be sent to it
+  const [isSerialConnected, setIsSerialConnected] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Scrolls the main terminal to a search match; auto-scroll is turned off so new lines do not
@@ -354,6 +357,7 @@ export default function Home() {
       mainList.replace([]);
       focusList.replace([]);
     });
+    const unlisten_serial_connection = listen<boolean>('serial-connection', (e) => setIsSerialConnected(e.payload));
 
     return () => {
       unlisten_serial_data.then(f => f());
@@ -362,6 +366,7 @@ export default function Home() {
       unlisten_serial_datas_append.then(f => f());
       unlisten_serial_datas_focus_append.then(f => f());
       unlisten_logs_cleared.then(f => f());
+      unlisten_serial_connection.then(f => f());
     };
   }, [mainList, focusList]);
 
@@ -459,7 +464,7 @@ export default function Home() {
                   height: '70%',
                 }}
                 >
-                <Box sx={{ height: '100%', position: 'relative' }}>
+                <Box sx={{ height: '100%', position: 'relative', display: 'flex', flexDirection: 'column' }}>
                   <Box
                     sx={{
                       position: 'absolute',
@@ -507,20 +512,27 @@ export default function Home() {
                       <SearchBar search={search} inputRef={searchInputRef} />
                     </Box>
                   )}
-                  <SerialTerminal
-                    rows={mainRows}
-                    listRef={listRefMain}
-                    onScroll={(event) => handleScroll(event, isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
-                    selectedLineId={selectedMainLineId}
-                    onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
-                    onInsertMarker={insertMarkerAbove}
-                    lineNumbers={mainLineNumbers}
-                    timestamps={timestamps}
-                    arrival={arrival}
-                    search={search.isOpen && search.regex
-                      ? { regex: search.regex, current: search.matches[search.currentIndex] }
-                      : undefined}
-                    minimap={config.showMinimap}
+                  <Box sx={{ flex: 1, minHeight: 0 }}>
+                    <SerialTerminal
+                      rows={mainRows}
+                      listRef={listRefMain}
+                      onScroll={(event) => handleScroll(event, isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
+                      selectedLineId={selectedMainLineId}
+                      onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
+                      onInsertMarker={insertMarkerAbove}
+                      lineNumbers={mainLineNumbers}
+                      timestamps={timestamps}
+                      arrival={arrival}
+                      search={search.isOpen && search.regex
+                        ? { regex: search.regex, current: search.matches[search.currentIndex] }
+                        : undefined}
+                      minimap={config.showMinimap}
+                    />
+                  </Box>
+                  <SendBar
+                    connected={isSerialConnected}
+                    lineEnding={config.sendLineEnding}
+                    onLineEndingChange={(sendLineEnding) => updateConfig({ sendLineEnding })}
                   />
                 </Box>
               </Resizable>
