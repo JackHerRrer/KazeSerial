@@ -179,13 +179,31 @@ const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePaylo
     });
 
 
-export function useCustomHilightsState(): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
-    const [value, setValue] = useState<HighligtConfig[]>();
+// Delay without any rule change before the logs are refreshed, so typing a pattern does not
+// reprocess the whole log on every key
+const AUTO_REFRESH_DELAY_MS = 300;
 
-    const customSetValue = useCallback((newValue: HighligtConfig[]) => {
+type SetHighlights = (newValue: HighligtConfig[], options?: { refresh?: boolean }) => void;
+
+export function useCustomHilightsState(): [HighligtConfig[] | undefined, SetHighlights] {
+    const [value, setValue] = useState<HighligtConfig[]>();
+    const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+    useEffect(() => () => clearTimeout(refreshTimer.current), []);
+
+    // The main and focus logs are refreshed with the new rules, unless `refresh` is false
+    const customSetValue = useCallback<SetHighlights>((newValue, { refresh = true } = {}) => {
         setValue(newValue);
         invoke<void>('set_highlights', { highlights: toHighlightPayload(newValue) })
-            .then(() => saveHighlightsToFile(newValue))
+            .then(() => {
+                if (refresh) {
+                    clearTimeout(refreshTimer.current);
+                    refreshTimer.current = setTimeout(() => {
+                        invoke<void>('refresh_logs').catch((err: unknown) => console.error(err));
+                    }, AUTO_REFRESH_DELAY_MS);
+                }
+                return saveHighlightsToFile(newValue);
+            })
             .catch((err: unknown) => console.error(err));
     }, []);
 
@@ -255,7 +273,8 @@ const HighLighSettings: React.FC = () => {
         readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig })
             .then(result => {
                 const persisted = JSON.parse(result) as PersistedHighlightConfig[];
-                setHighlights(persisted.map(parsePersistedHighlight));
+                // No refresh for the saved rules: at launch there are no logs yet
+                setHighlights(persisted.map(parsePersistedHighlight), { refresh: false });
             })
             .catch(e => console.error('Failed to load highlights:', e));
     }, [setHighlights]);
@@ -273,7 +292,8 @@ const HighLighSettings: React.FC = () => {
             // Updated right away so rules added in quick succession are all kept
             const next = [...(highlightsRef.current ?? []), rule];
             highlightsRef.current = next;
-            setHighlights(next);
+            // add_highlight refreshes the logs itself, before returning to the MCP client
+            setHighlights(next, { refresh: false });
         });
         return () => { unlisten.then(f => f()); };
     }, [setHighlights]);

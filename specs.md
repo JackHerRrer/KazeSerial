@@ -40,7 +40,6 @@ A vertical flex column containing:
    - Toolbar (top-right overlay, left of the minimap, left to right):
      - **Search** (magnifier icon) — opens or closes the [search bar](#search) (also Ctrl+F); highlighted in blue while open
      - **Auto-scroll toggle** (arrow-down icon) — enables/disables auto-scroll
-     - **Refresh** (refresh icon) — reprocesses all raw lines through current highlight rules (`refresh_logs` command). The lines are read from the backend [log store](#log-store), so lines received meanwhile are neither lost nor shown twice, and lines evicted from the store (past its capacity) disappear
      - **Insert marker** (bookmark icon) — appends a [marker line](#markers) (also Ctrl+M)
      - **Save** (save icon) — saves the main log to a `.log` file
      - **Delete** (delete icon) — clears the main log and the backend [log store](#log-store), so MCP clients see the same log. Ctrl+Shift+R also clears the focus log
@@ -367,10 +366,11 @@ These are independent from the auto-save to `AppConfig`.
 On every change, highlights are:
 1. Sent to the Rust backend via `invoke("set_highlights", { highlights: [...] })`
 2. Saved to `highlight_settings.json` in `BaseDirectory.AppConfig`
+3. Applied to the lines already shown: once `set_highlights` has returned, the logs are refreshed (**Refresh**, `refresh_logs` command) after 300 ms without any other change, so typing a pattern does not reprocess the whole log on every key. Each change restarts the delay. The lines are read from the backend [log store](#log-store), so lines received meanwhile are neither lost nor shown twice, and lines evicted from the store (past its capacity) disappear
 
-On mount, highlights are loaded from that file.
+On mount, highlights are loaded from that file, without a refresh (there are no logs yet at launch).
 
-A rule added by the MCP `add_highlight` tool (`mcp-add-highlight` event) is appended as a new row and goes through the same steps.
+A rule added by the MCP `add_highlight` tool (`mcp-add-highlight` event) is appended as a new row and goes through steps 1 and 2; the tool refreshes the logs itself.
 
 ### Rule data model (TypeScript)
 
@@ -518,7 +518,7 @@ Used by Demo regenerate. Processes a batch of raw lines, without timestamps, thr
 - `serial-datas-focus` — only lines that matched a focus rule
 
 #### `refresh_logs()`
-Used by Refresh and the MCP `refresh_logs` tool. Re-applies the current highlight rules to every line of the [log store](#log-store), which holds the lines shown, and emits `serial-datas` / `serial-datas-focus`. Lines keep their id, timestamp and marker flag. The lines are processed in parallel without `publish_lock`, so lines keep being received; then, under the lock, the lines published meanwhile are processed too and the result replaces the log.
+Used by the [automatic refresh](#persistence) of the Highlight tab; the MCP `add_highlight` tool calls the same `refresh` function. Re-applies the current highlight rules to every line of the [log store](#log-store), which holds the lines shown, and emits `serial-datas` / `serial-datas-focus`. Lines keep their id, timestamp and marker flag. The lines are processed in parallel without `publish_lock`, so lines keep being received; then, under the lock, the lines published meanwhile are processed too and the result replaces the log.
 
 ### Highlight processing pipeline (`process_line`)
 
@@ -657,7 +657,7 @@ Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) 
 
 - **Transport**: Streamable HTTP at `http://127.0.0.1:{port}/mcp`, served inside the Tauri process. Bound to loopback only; the `Host` header is checked against loopback names against DNS rebinding.
 - **Lifecycle**: off by default, and never started automatically from the settings. Started and stopped from the [Config tab](#config-tab) (**Enable MCP server**, on the saved **Port**), or at launch when `KAZESERIAL_MCP_PORT` is set (`0` picks a free port, printed in the log).
-- **Scope**: read-only apart from `clear_logs`, `add_highlight` and `refresh_logs`. Nothing can touch the serial port or the files.
+- **Scope**: read-only apart from `clear_logs` and `add_highlight`. Nothing can touch the serial port or the files.
 - **Limits**: a call returns at most **20 000** lines; a wait blocks at most **120 s**.
 
 ### Tools
@@ -673,8 +673,7 @@ Embedded [MCP](https://modelcontextprotocol.io) server (`mcp.rs`, `rmcp` crate) 
 | `wait_for_logs(after_id, timeout_ms=15000, max_lines=500)` | Blocks until lines with `id > after_id` arrive; returns them with the new `last_id` |
 | `wait_for_pattern(after_id, pattern, is_regex=false, ignore_case=true, skip_occurrences=0, timeout_ms=15000)` | Blocks until a line with `id > after_id` matches, after skipping `skip_occurrences` matches; returns it with the new `last_id` |
 | `clear_logs` | Clears the store, resets the marker numbering, and emits `logs-cleared` so the window is cleared too |
-| `add_highlight(pattern, is_regex=false, case_sensitive=true, color="#cc7f12", focus=true, remove=false, whole_line=false, advanced_selections=[])` | Emits `mcp-add-highlight` and waits (10 s max) for the window's `set_highlights`; returns the rule. `advanced_selections` is a list of `{ groups: [1, 3], color? }`. Rejected: invalid regex or color, advanced without regex or with `whole_line`, unknown group |
-| `refresh_logs` | Runs Refresh (`refresh_logs` command); returns the line counts and ids. Line ids are kept |
+| `add_highlight(pattern, is_regex=false, case_sensitive=true, color="#cc7f12", focus=true, remove=false, whole_line=false, advanced_selections=[])` | Emits `mcp-add-highlight` and waits (10 s max) for the window's `set_highlights`, then refreshes the logs (`refresh`), so the lines already shown are processed when it returns; returns the rule and the line counts (`total_lines`, `focus_lines`). `advanced_selections` is a list of `{ groups: [1, 3], color? }`. Rejected: invalid regex or color, advanced without regex or with `whole_line`, unknown group |
 
 Line ids are stable within a session and never reused. They give the order in which lines were added, which is the log order except for a [marker inserted above a line](#markers): `wait_for_logs` and `wait_for_pattern` walk lines in id order, so such a marker is reported once, as a new line, and `newest_id` is the largest id, not the id of the last line. The other tools return lines in log order.
 

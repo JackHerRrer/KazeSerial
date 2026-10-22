@@ -646,8 +646,8 @@ fn reprocess(record: LogRecord, highlights: &[HighlightSettings]) -> Payload {
     }
 }
 
-/// Re-applies the current highlight rules to the whole log, for the Refresh button and the MCP
-/// `refresh_logs` tool. Lines keep their id, reception time and marker and sent flags.
+/// Re-applies the current highlight rules to the whole log, when the Highlight tab changes a rule
+/// (`refresh_logs` command) and for the MCP `add_highlight` tool. Lines keep their id, reception time and marker and sent flags.
 ///
 /// The log store holds every line shown, so the lines are taken from it and processed in parallel
 /// without the publication lock: lines keep being received meanwhile. Under the lock, the lines

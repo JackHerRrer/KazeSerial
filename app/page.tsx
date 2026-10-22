@@ -13,7 +13,6 @@ import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
 import SaveIcon from '@mui/icons-material/Save';
@@ -317,12 +316,6 @@ export default function Home() {
     if (filePath) await writeTextFile(filePath, text);
   };
 
-  // Re-apply current highlight rules to all lines: the backend reprocesses the lines it recorded
-  // and replaces the logs, without losing the lines received meanwhile
-  const onClickRefreshAll = () => {
-    invoke<void>('refresh_logs').catch((err: unknown) => console.error(err));
-  };
-
   useEffect(() => {
     if (isMainAutoScrollEnabled && listRefMain.current && logs.length > 0) {
       scrollToRow(listRefMain, logs.length - 1, 'auto');
@@ -480,9 +473,6 @@ export default function Home() {
                     </ToolbarButton>
                     <ToolbarButton title="Auto-scroll" label="toggle auto-scroll" active={isMainAutoScrollEnabled} onClick={onToggleAutoScrollFromLogs}>
                       <KeyboardArrowDownIcon fontSize="medium" />
-                    </ToolbarButton>
-                    <ToolbarButton title="Apply current highlight rules to all logs (Usefull when rules have changed)" label="refresh logs" onClick={onClickRefreshAll}>
-                      <RefreshIcon fontSize="medium" />
                     </ToolbarButton>
                     <ToolbarButton title="Insert a marker (Ctrl+M)" label="insert marker" onClick={addMarker}>
                       <BookmarkAddOutlinedIcon fontSize="medium" />

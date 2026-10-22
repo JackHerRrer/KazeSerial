@@ -7,8 +7,8 @@
 //! claude mcp add --transport http kazeserial http://127.0.0.1:9339/mcp
 //! ```
 //!
-//! Read-only apart from [`KazeMcp::clear_logs`], [`KazeMcp::add_highlight`] and
-//! [`KazeMcp::refresh_logs`]. Nothing here can touch the serial port.
+//! Read-only apart from [`KazeMcp::clear_logs`] and [`KazeMcp::add_highlight`]. Nothing here
+//! can touch the serial port.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -157,19 +157,9 @@ pub struct ClearOutput {
 pub struct AddHighlightOutput {
     /// The rule as it was added to the user's highlight list, after defaults were applied.
     pub rule: HighlightRule,
-    /// Reminder of what the rule applies to.
-    pub note: String,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub struct RefreshOutput {
     pub total_lines: usize,
-    /// Lines matching a "focus" highlight rule after the refresh.
+    /// Lines matching a "focus" highlight rule, the new one included.
     pub focus_lines: usize,
-    /// Lowest id, `null` when empty.
-    pub oldest_id: Option<u64>,
-    /// Highest id, `null` when empty.
-    pub newest_id: Option<u64>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -733,9 +723,9 @@ impl KazeMcp {
                        sensitivity, focus, remove, whole line, and per-capture-group colors in \
                        advanced mode). Use it to make something you found stand out in the \
                        user's window, or to flag lines as focus so get_focus_logs returns them. \
-                       The rule is saved with the user's other rules and applies to lines \
-                       received from now on; call refresh_logs to apply it to the lines already \
-                       shown. Tell the user what you added — they can edit or delete it in the \
+                       The rule is saved with the user's other rules and is applied to the lines \
+                       already shown before this returns, so get_focus_logs includes the lines \
+                       it flags. Tell the user what you added — they can edit or delete it in the \
                        Highlight tab."
     )]
     async fn add_highlight(
@@ -748,30 +738,15 @@ impl KazeMcp {
         let state = self.app.state::<crate::AppState>();
         self.ask_window("mcp-add-highlight", &rule, &state.highlights_updated)
             .await?;
-        Ok(Json(AddHighlightOutput {
-            rule,
-            note: "Applies to lines received from now on. Call refresh_logs to re-color the \
-                   lines already shown."
-                .to_string(),
-        }))
-    }
-
-    #[tool(
-        name = "refresh_logs",
-        description = "Re-apply the current highlight rules to every line shown, like the \
-                       user's Refresh button — e.g. right after add_highlight, so the new rule \
-                       also colors and flags as focus the lines already captured. Returns once \
-                       the window is updated. Line ids are kept, so ids and cursors stay valid."
-    )]
-    async fn refresh_logs(&self) -> Json<RefreshOutput> {
+        // Done here rather than by the window's automatic refresh, so the lines already shown
+        // are processed when the client reads them.
         crate::refresh(&self.app).await;
         let stats = self.store.stats().await;
-        Json(RefreshOutput {
+        Ok(Json(AddHighlightOutput {
+            rule,
             total_lines: stats.total_lines,
             focus_lines: stats.focus_lines,
-            oldest_id: stats.oldest_id,
-            newest_id: stats.newest_id,
-        })
+        }))
     }
 }
 
@@ -809,8 +784,7 @@ impl ServerHandler for KazeMcp {
                  - get_all_logs only when you truly need everything; it paginates and a capture \
                  can be tens of thousands of lines\n\
                  - add_highlight to add a highlight rule to the user's window, e.g. to make what \
-                 you found stand out or to flag it as focus, then refresh_logs to apply it to the \
-                 lines already shown\n\n\
+                 you found stand out or to flag it as focus\n\n\
                  Line text is always raw, with no highlight markup. Ids are stable within a \
                  session; the buffer is a ring, so old lines can be evicted (dropped_lines in \
                  get_status says how many).",
