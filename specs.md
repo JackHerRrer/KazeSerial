@@ -302,6 +302,8 @@ Line splitting and decoding live in `tail_splitter.rs` (`TailSplitter`, `decode_
 
 A table-based UI to define highlight/filter rules, persisted to `highlight_settings.json` in the app config directory.
 
+The Highlight tab panel has a 12px padding on the sides and 16px at the top (24px at the bottom), narrower than the other panels (24px) so the table gets more room.
+
 ### Table structure
 
 Each row represents one rule. Columns (left to right):
@@ -309,17 +311,19 @@ Each row represents one rule. Columns (left to right):
 | Column | Width | Description |
 |---|---|---|
 | Drag handle | 28px | `DragIndicatorIcon`, draggable for reordering |
-| Search | min 180px | Text input for the pattern, with a tighter padding than the MUI small size (4px top, 1px bottom, 8px horizontal) to keep the rows short; the smaller bottom padding makes text without descenders look centered. Turns red (MUI `error` state) when `Regexp` is checked and the pattern is not a valid regex |
-| Color | 36px | `ColorPickerButton`: a swatch opening a Sketch color picker with preset colors |
-| Case sens. | 36px | Checkbox — match with case sensitivity (default: checked) |
-| Regexp | 36px | Checkbox — treat search text as regex |
-| Focus | 36px | Checkbox — send matching lines to focus panel |
-| Remove | 36px | Checkbox — remove matched text from output |
-| Whole line | 36px | Checkbox — apply highlight/removal to entire line |
-| Advanced | 36px | Checkbox — enable per-capture-group coloring (requires Regexp) |
+| Search | min 180px | Text input for the pattern, in a cell with no left padding to stay close to the drag handle and an 8px right padding before the color (the header label gets a 4px left padding so it lines up with the typed text, and a 2px bottom padding with a line height of 1 so it sits on the same line as the rotated option labels), with a tighter padding than the MUI small size (4px top, 1px bottom, 4px left, 8px right) to keep the rows short; the smaller bottom padding makes text without descenders look centered. Turns red (MUI `error` state) when `Regexp` is checked and the pattern is not a valid regex |
+| Color | 32px | `ColorPickerButton`: a swatch opening a Sketch color picker with preset colors |
+| Case sens. | 32px | Checkbox — match with case sensitivity (default: checked) |
+| Regexp | 32px | Checkbox — treat search text as regex |
+| Focus | 32px | Checkbox — send matching lines to focus panel |
+| Remove | 32px | Checkbox — remove matched text from output |
+| Whole line | 32px | Checkbox — apply highlight/removal to entire line |
+| Advanced | 32px | Checkbox — enable per-capture-group coloring (requires Regexp) |
 | Delete | 36px | `DeleteIcon` button |
 
-Column headers are rotated **-45°** from the bottom-left corner with `overflow: visible`. The table has a horizontal scrollbar when the panel is too narrow.
+The option checkboxes have a 6px padding (instead of the 9px of the MUI small size) to fit in their 32px columns.
+
+Column headers are rotated **-45°** from the bottom-left corner with `overflow: visible`, in a 72px high header row. The table has a horizontal scrollbar when the panel is too narrow.
 
 ### Tooltips
 Every option cell has a MUI `Tooltip` (placement `top`, with arrow). Each tooltip begins with the option name in uppercase followed by a colon:
@@ -344,7 +348,7 @@ When a rule has both `is_regex = true` and `advanced = true`, a single child row
 - The two rows are kept close: the Search cell of the parent row has a 2px bottom padding, and the child row no top padding
 - The child row contains a horizontal list of **selections**, each consisting of:
   - A color picker (`ColorPickerButton`)
-  - A text field (width 55px) for capture group numbers (e.g. `1,2`)
+  - A text field (width 55px) for capture group numbers (e.g. `1,2`), with the same font and padding as the Search field
   - A delete button (hidden if only one selection remains)
 - A single `+` button at the end of the row adds a new selection
 - The child row starts with a `SubdirectoryArrowRightIcon` (grayed, `text.disabled`) and a left padding of 32px

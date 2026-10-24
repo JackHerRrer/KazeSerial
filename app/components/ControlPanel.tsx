@@ -64,7 +64,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ config, onConfigChange }) =
           <FileSettings />
         </TabPanel>
       </TabPanel>
-      <TabPanel active={mainTab === 'highlight'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>
+      {/* Narrower on the sides and at the top than the other panels so the rules table gets more room */}
+      <TabPanel active={mainTab === 'highlight'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3, px: 1.5, pt: 2 }}>
         <HighLighSettings />
       </TabPanel>
       <TabPanel active={mainTab === 'config'} sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 3 }}>

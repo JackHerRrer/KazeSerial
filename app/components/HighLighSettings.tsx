@@ -83,13 +83,13 @@ interface HighlightMessagePayload {
 }
 
 const DEFAULT_HIGHLIGHT_COLOR = '#cc7f12';
-const COLOR_COLUMN_WIDTH = 36;
-const CASE_SENSITIVE_COLUMN_WIDTH = 36;
-const REGEX_COLUMN_WIDTH = 36;
-const FOCUS_COLUMN_WIDTH = 36;
-const REMOVE_COLUMN_WIDTH = 36;
-const WHOLE_LINE_COLUMN_WIDTH = 36;
-const ADVANCED_COLUMN_WIDTH = 36;
+const COLOR_COLUMN_WIDTH = 30;
+const CASE_SENSITIVE_COLUMN_WIDTH = 30;
+const REGEX_COLUMN_WIDTH = 30;
+const FOCUS_COLUMN_WIDTH = 30;
+const REMOVE_COLUMN_WIDTH = 30;
+const WHOLE_LINE_COLUMN_WIDTH = 30;
+const ADVANCED_COLUMN_WIDTH = 30;
 const DRAG_COLUMN_WIDTH = 28;
 const SENTENCE_MIN_COLUMN_WIDTH = 180;
 const OPTION_COLUMNS = [
@@ -102,6 +102,9 @@ const OPTION_COLUMNS = [
         { label: 'Advanced', width: ADVANCED_COLUMN_WIDTH },
 ] as const;
 const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
+// Text fields of the rules (search and capture groups): tighter padding than the small size so the rules take less height
+// and the text starts close to the left edge, a bit less at the bottom so the text, mostly without descenders, looks centered
+const RULE_INPUT_SX = { '& .MuiInputBase-input': { pt: 0.5, pb: '1px', pl: 0.7, pr: 1 } };
 const ACTION_COLUMN_WIDTH = 36;
 const TABLE_MIN_WIDTH =
     DRAG_COLUMN_WIDTH +
@@ -545,7 +548,11 @@ const HighLighSettings: React.FC = () => {
                 </IconButton>
             </Box>
             <Box sx={{ overflowX: 'auto', overflowY: 'visible', width: '100%' }}>
-                <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH }}>
+                {/* Checkboxes with a smaller padding than the small size (9px) so they fit in the narrow option columns */}
+                <Table
+                    size="small"
+                    sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH, '& .MuiCheckbox-root': { p: 0.75 } }}
+                >
                     <TableHead sx={{ overflow: 'visible' }}>
                         <TableRow sx={{ overflow: 'visible' }}>
                             <TableCell
@@ -557,7 +564,11 @@ const HighLighSettings: React.FC = () => {
                                     borderBottom: 'none',
                                 }}
                             />
-                            <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>Search</TableCell>
+                            {/* Horizontal padding of the body cell plus the one of the input, so the label lines up with the typed text.
+                                Same bottom offset and line height as the rotated option labels, so all the labels sit on the same line */}
+                            <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH, pl: 0.5, pr: 1, pb: '4px', lineHeight: 1 }}>
+                                Search
+                            </TableCell>
                             {OPTION_COLUMNS.map((optionColumn) => {
                                 return (
                                     <TableCell
@@ -567,7 +578,7 @@ const HighLighSettings: React.FC = () => {
                                             minWidth: optionColumn.width,
                                             maxWidth: optionColumn.width,
                                             p: 0,
-                                            height: '80px',
+                                            height: '72px',
                                             overflow: 'visible',
                                             verticalAlign: 'bottom',
                                         }}
@@ -647,8 +658,9 @@ const HighLighSettings: React.FC = () => {
                                             </IconButton>
                                         </Box>
                                     </TableCell>
-                                    {/* Little bottom padding when the advanced row follows, to keep the two rows close */}
-                                    <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH, ...(filter.advanced && { pb: '2px' }) }}>
+                                    {/* No left padding so the field touches the drag handle, a bit on the right to keep some space before the color. Little
+                                        bottom padding when the advanced row follows, to keep the two rows close */}
+                                    <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH, pl: 0, pr: 1, ...(filter.advanced && { pb: '2px' }) }}>
                                         <TextField
                                             size="small"
                                             placeholder="Filter text"
@@ -656,9 +668,7 @@ const HighLighSettings: React.FC = () => {
                                             onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
                                             fullWidth
                                             error={isInvalidRegex(filter.text, filter.is_regex)}
-                                            // Tighter padding than the small size so the rules take less height, a bit less at the bottom so the
-                                            // text, mostly without descenders, looks centered
-                                            sx={{ '& .MuiInputBase-input': { pt: 0.5, pb: '1px', px: 1 } }}
+                                            sx={RULE_INPUT_SX}
                                         />
                                     </TableCell>
                                     <TableCell
@@ -828,13 +838,7 @@ const HighLighSettings: React.FC = () => {
                                                                     }
                                                                     disabled={filter.remove}
                                                                     error={hasInvalidGroup(selection.selector, filter.text)}
-                                                                    sx={{
-                                                                        width: 55,
-                                                                        '& .MuiInputBase-input': {
-                                                                            fontSize: '0.75rem',
-                                                                            py: 0.5,
-                                                                        },
-                                                                    }}
+                                                                    sx={{ width: 55, ...RULE_INPUT_SX }}
                                                                 />
                                                             </span>
                                                         </Tooltip>
