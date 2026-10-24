@@ -323,7 +323,7 @@ Each row represents one rule. Columns (left to right):
 
 The option checkboxes have a 6px padding (instead of the 9px of the MUI small size) to fit in their 32px columns.
 
-Column headers are rotated **-45°** from the bottom-left corner with `overflow: visible`, in a 72px high header row. The table has a horizontal scrollbar when the panel is too narrow.
+Column headers are rotated **-45°** from the bottom-left corner with `overflow: visible`, in a 72px high header row. The header row is sticky: the table fills the panel height and scrolls by itself, so the column labels and the Load / Save buttons (drawn above the header) stay visible when scrolling through many rules. The table has a horizontal scrollbar when the panel is too narrow.
 
 ### Tooltips
 Every option cell has a MUI `Tooltip` (placement `top`, with arrow). Each tooltip begins with the option name in uppercase followed by a colon:

@@ -515,8 +515,10 @@ const HighLighSettings: React.FC = () => {
     };
 
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0, width: '100%' }}>
-            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-start', position: 'relative', zIndex: 1, mb: '-42px' }}>
+        // Fills the panel height so the table scrolls by itself, below its sticky header
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0, width: '100%', height: '100%' }}>
+            {/* Above the sticky table header, which they overlap */}
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-start', position: 'relative', zIndex: 3, mb: '-42px' }}>
                 <IconButton
                     size="medium"
                     title="Load highlight rules from file"
@@ -547,13 +549,15 @@ const HighLighSettings: React.FC = () => {
                     <SaveIcon fontSize="medium" />
                 </IconButton>
             </Box>
-            <Box sx={{ overflowX: 'auto', overflowY: 'visible', width: '100%' }}>
+            <Box sx={{ overflow: 'auto', width: '100%', flex: 1, minHeight: 0 }}>
                 {/* Checkboxes with a smaller padding than the small size (9px) so they fit in the narrow option columns */}
                 <Table
                     size="small"
                     sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH, '& .MuiCheckbox-root': { p: 0.75 } }}
                 >
-                    <TableHead sx={{ overflow: 'visible' }}>
+                    {/* Sticky so the column labels stay visible when scrolling through many rules. Set on the head rather than on
+                        its cells, so the rotated labels overflowing their cell are not covered by the next cell background */}
+                    <TableHead sx={{ overflow: 'visible', position: 'sticky', top: 0, zIndex: 2, bgcolor: 'background.default' }}>
                         <TableRow sx={{ overflow: 'visible' }}>
                             <TableCell
                                 sx={{
