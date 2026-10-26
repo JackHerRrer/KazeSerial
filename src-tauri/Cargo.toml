@@ -1,7 +1,7 @@
 [package]
 name = "kaze-serial"
 version = "0.1.3"
-description = "A Tauri App"
+description = "A modern serial terminal with on-the-fly log highlighting"
 authors = ["you"]
 license = ""
 repository = ""
