@@ -6,7 +6,8 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
-import DeleteSweepOutlinedIcon from '@mui/icons-material/DeleteSweepOutlined';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import RowComponent, { MARKER_COLOR } from './SerialTerminalLine';
 import LogMinimap, { MINIMAP_WIDTH, scrollByWheel, type LogMinimapHandle } from './LogMinimap';
 import { type SearchMatch } from '../utils/search';
@@ -22,6 +23,8 @@ const INSERT_MARKER_RIGHT_GAP = 20;
 // Size of the buttons over the hovered row, in px, and the gap between them
 const ROW_BUTTON_SIZE = 20;
 const ROW_BUTTON_GAP = 4;
+// Width of the remove lines above button, which shows an arrow next to its icon, in px
+const REMOVE_LINES_BUTTON_WIDTH = 28;
 
 /** Line number gutter: number shown for each line index, and digit count of the widest number */
 export type LineNumbers = {
@@ -143,13 +146,14 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
     onClickRow?.(message_id);
   };
 
-  // Button over the hovered row, `slot` buttons left of the rightmost one
-  const rowButtonSx = (slot: number) => ({
+  // Button over the hovered row, `slot` buttons left of the rightmost one. A wider button
+  // extends to the left.
+  const rowButtonSx = (slot: number, width = ROW_BUTTON_SIZE) => ({
     position: 'absolute',
     top: hoveredRow?.top,
     right: TERMINAL_PADDING + INSERT_MARKER_RIGHT_GAP + (minimap ? MINIMAP_WIDTH : 0) + slot * (ROW_BUTTON_SIZE + ROW_BUTTON_GAP),
     zIndex: 1,
-    width: ROW_BUTTON_SIZE,
+    width,
     height: ROW_BUTTON_SIZE,
     p: 0,
     borderRadius: 1,
@@ -257,9 +261,10 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
               size="small"
               onClick={() => onRemoveLinesAbove(hoveredRow.id)}
               // Left of the insert marker button
-              sx={{ ...rowButtonSx(onInsertMarker ? 1 : 0), color: '#d4d4d4' }}
+              sx={{ ...rowButtonSx(onInsertMarker ? 1 : 0, REMOVE_LINES_BUTTON_WIDTH), color: 'error.main' }}
             >
-              <DeleteSweepOutlinedIcon sx={{ fontSize: 16 }} />
+              <DeleteOutlineIcon sx={{ fontSize: 16 }} />
+              <ArrowUpwardIcon sx={{ fontSize: 12, ml: '-4px', transform: 'scale(0.7, 1.4)' }} />
             </IconButton>
           </Tooltip>
         )}
