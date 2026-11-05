@@ -6,6 +6,7 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
+import DeleteSweepOutlinedIcon from '@mui/icons-material/DeleteSweepOutlined';
 import RowComponent, { MARKER_COLOR } from './SerialTerminalLine';
 import LogMinimap, { MINIMAP_WIDTH, scrollByWheel, type LogMinimapHandle } from './LogMinimap';
 import { type SearchMatch } from '../utils/search';
@@ -14,10 +15,13 @@ import { type TerminalRows } from '../utils/terminalRows';
 // Padding of the terminal box, in px
 const TERMINAL_PADDING = 8;
 // Height of a row, in px
-const ROW_HEIGHT = 20;
+export const ROW_HEIGHT = 20;
 // Distance between the insert marker button and the right edge of the list, in px, so the
 // button stays clear of the vertical scrollbar
 const INSERT_MARKER_RIGHT_GAP = 20;
+// Size of the buttons over the hovered row, in px, and the gap between them
+const ROW_BUTTON_SIZE = 20;
+const ROW_BUTTON_GAP = 4;
 
 /** Line number gutter: number shown for each line index, and digit count of the widest number */
 export type LineNumbers = {
@@ -57,6 +61,7 @@ interface SerialTerminalProps {
   onScroll: UIEventHandler<HTMLDivElement>;
   onClickRow?: (message_id: number) => void;
   onInsertMarker?: (message_id: number) => void;
+  onRemoveLinesAbove?: (message_id: number) => void;
   selectedLineId?: number | null;
   lineNumbers?: LineNumbers;
   timestamps?: Timestamps;
@@ -71,6 +76,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
   onScroll,
   onClickRow,
   onInsertMarker,
+  onRemoveLinesAbove,
   selectedLineId: externalSelectedLineId,
   lineNumbers,
   timestamps,
@@ -80,9 +86,9 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
 }) => {
   const [internalSelectedLineId, setInternalSelectedLineId] = useState<number | null>(null);
 
-  // Row under the pointer, highlighted. The insert marker button is a single button over the list,
-  // at a fixed distance from its right edge so horizontal scrolling does not move it, at the
-  // height of that row.
+  // Row under the pointer, highlighted. The insert marker and remove lines above buttons are single
+  // buttons over the list, at a fixed distance from its right edge so horizontal scrolling does not
+  // move them, at the height of that row.
   const boxRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [hoveredRow, setHoveredRow] = useState<{ id: number; top: number } | null>(null);
@@ -136,6 +142,20 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
     }
     onClickRow?.(message_id);
   };
+
+  // Button over the hovered row, `slot` buttons left of the rightmost one
+  const rowButtonSx = (slot: number) => ({
+    position: 'absolute',
+    top: hoveredRow?.top,
+    right: TERMINAL_PADDING + INSERT_MARKER_RIGHT_GAP + (minimap ? MINIMAP_WIDTH : 0) + slot * (ROW_BUTTON_SIZE + ROW_BUTTON_GAP),
+    zIndex: 1,
+    width: ROW_BUTTON_SIZE,
+    height: ROW_BUTTON_SIZE,
+    p: 0,
+    borderRadius: 1,
+    bgcolor: '#1e1e1e',
+    '&:hover': { bgcolor: '#333' },
+  } as const);
 
   const handleCopy = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const selection = window.getSelection();
@@ -224,21 +244,22 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
               aria-label="insert a marker above"
               size="small"
               onClick={() => onInsertMarker(hoveredRow.id)}
-              sx={{
-                position: 'absolute',
-                top: hoveredRow.top,
-                right: TERMINAL_PADDING + INSERT_MARKER_RIGHT_GAP + (minimap ? MINIMAP_WIDTH : 0),
-                zIndex: 1,
-                width: 20,
-                height: 20,
-                p: 0,
-                borderRadius: 1,
-                color: MARKER_COLOR,
-                bgcolor: '#1e1e1e',
-                '&:hover': { bgcolor: '#333' },
-              }}
+              sx={{ ...rowButtonSx(0), color: MARKER_COLOR }}
             >
               <BookmarkAddOutlinedIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        )}
+        {onRemoveLinesAbove && hoveredRow && (
+          <Tooltip title="Remove the lines above" placement="left" arrow>
+            <IconButton
+              aria-label="remove the lines above"
+              size="small"
+              onClick={() => onRemoveLinesAbove(hoveredRow.id)}
+              // Left of the insert marker button
+              sx={{ ...rowButtonSx(onInsertMarker ? 1 : 0), color: '#d4d4d4' }}
+            >
+              <DeleteSweepOutlinedIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
         )}

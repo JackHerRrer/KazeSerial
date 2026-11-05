@@ -9,6 +9,7 @@
 //! - `serial-data` / `*-append` events append   -> [`LogStore::append`]
 //! - `serial-datas` / `serial-datas-focus` replace the list -> [`LogStore::replace`]
 //! - a marker inserted in the middle of the log            -> [`LogStore::insert_before`]
+//! - the lines above a line removed by the user            -> [`LogStore::remove_before`]
 //!
 //! Records are kept in display order. Ids are given in the order lines are added, so they
 //! increase along the log, except for a marker inserted in the middle: it gets a new id, larger
@@ -187,6 +188,16 @@ impl LogStore {
             inner.enforce_capacity();
         }
         self.notify.notify_waiters();
+    }
+
+    /// Removes every record above the record `id`, which is kept. Does nothing when that record
+    /// is not in the store anymore (evicted or cleared).
+    pub async fn remove_before(&self, id: u64) {
+        let mut inner = self.inner.write().await;
+        let Some(position) = inner.records.iter().position(|r| r.id == id) else {
+            return;
+        };
+        inner.records.drain(..position);
     }
 
     pub async fn clear(&self) {
@@ -820,6 +831,19 @@ mod tests {
         let (records, _) = store.page(0, 10).await;
         assert_eq!(records.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 4, 2, 3]);
         assert_eq!(store.stats().await.newest_id, Some(4), "the newest id, not the last line");
+    }
+
+    #[tokio::test]
+    async fn remove_before_keeps_its_line_and_the_lines_below() {
+        let store = store_with(&[(1, "a"), (2, "b"), (3, "c")]).await;
+
+        store.remove_before(2).await;
+        // Unknown line (evicted or cleared): nothing is removed
+        store.remove_before(42).await;
+
+        let (records, _) = store.page(0, 10).await;
+        assert_eq!(records.iter().map(|r| r.id).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(store.stats().await.dropped_lines, 0, "removed by the user, not evicted");
     }
 
     #[tokio::test]

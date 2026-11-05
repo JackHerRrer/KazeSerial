@@ -1195,6 +1195,16 @@ async fn clear_logs(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Removes the lines above the line `before_id` from the log store when the user removes them
+/// from the main log, so MCP clients see the same log. Like [`clear_logs`], it emits nothing: the
+/// window already removed them.
+#[tauri::command]
+async fn clear_logs_before(before_id: u64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let _publishing = state.publish_lock.lock().await;
+    state.log_store.remove_before(before_id).await;
+    Ok(())
+}
+
 /// Opens a file once: its lines replace the logs. Decoded and split like a followed file,
 /// except that the last line is kept even without a trailing newline.
 #[tauri::command]
@@ -1439,6 +1449,7 @@ pub fn run() {
             append_logs_line,
             refresh_logs,
             clear_logs,
+            clear_logs_before,
             add_marker,
             insert_marker,
             set_log_file_settings,

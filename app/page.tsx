@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, type SyntheticEvent } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, type SyntheticEvent } from 'react';
 import Container from '@mui/material/Container';
 import Box from '@mui/material/Box';
 import { Resizable } from 're-resizable';
@@ -28,7 +28,7 @@ import ToolbarButton from './components/ToolbarButton';
 import SearchBar from './components/SearchBar';
 import SendBar from './components/SendBar';
 import { useLogSearch } from './hooks/useLogSearch';
-import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
+import SerialTerminal, { ROW_HEIGHT, type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
 import { MINIMAP_WIDTH } from './components/LogMinimap';
 import { formatTimestamp, isTimestampShown, timestampColumnText, timestampWidth } from './utils/timestamp';
 import { useAppConfig } from './hooks/useAppConfig';
@@ -258,6 +258,49 @@ export default function Home() {
       })
       .catch((err: unknown) => console.error(err));
   };
+
+  // Height of the rows removed from the top of each terminal by the last removal, in px. The
+  // terminals are scrolled up by as much once the rows are gone, so the view follows the lines.
+  const removedHeightRef = useRef({ main: 0, focus: 0 });
+
+  // Removes the lines above a line of the main log, and the focus lines among them; the line
+  // itself is kept
+  const removeLinesAbove = (lineId: number) => {
+    const index = findLogIndex(logs, lineId);
+    if (index <= 0) return;
+    const removedIds = new Set(logs.slice(0, index).map(line => line.id));
+    // Focus lines are in the order of the main log, so the removed ones come first
+    const focusRemoved = focusLogs.findIndex(line => !removedIds.has(line.id));
+    const focusRemovedRows = focusRemoved < 0 ? focusRows.count : focusRows.rowOf(focusRemoved);
+    removedHeightRef.current = {
+      main: mainRows.rowOf(index) * ROW_HEIGHT,
+      focus: focusRemovedRows * ROW_HEIGHT,
+    };
+    // Positions are looked up again, as appended lines may not be rendered yet
+    setLogs(prev => {
+      const at = findLogIndex(prev, lineId);
+      return at < 0 ? prev : prev.slice(at);
+    });
+    setFocusLogs(prev => prev.filter(line => !removedIds.has(line.id)));
+    invoke<void>('clear_logs_before', { beforeId: lineId }).catch((err: unknown) => console.error(err));
+  };
+
+  // Scrolls the terminals up by the height of the removed rows, before the browser paints them.
+  // A terminal following the end of the log is left to auto-scroll.
+  useLayoutEffect(() => {
+    const { main, focus } = removedHeightRef.current;
+    removedHeightRef.current = { main: 0, focus: 0 };
+    const mainElement = listRefMain.current?.element;
+    if (main > 0 && mainElement && !isMainAutoScrollEnabled) {
+      ignoreMainScrollUntilRef.current = Date.now() + 250;
+      mainElement.scrollBy({ top: -main, behavior: 'instant' });
+    }
+    const focusElement = listRefFocus.current?.element;
+    if (focus > 0 && focusElement && !isFocusAutoScrollEnabled) {
+      ignoreFocusScrollUntilRef.current = Date.now() + 250;
+      focusElement.scrollBy({ top: -focus, behavior: 'instant' });
+    }
+  }, [logs, focusLogs, isMainAutoScrollEnabled, isFocusAutoScrollEnabled]);
 
   // Click on a focus row: scroll the main terminal to the matching line and highlight it
   const onClickFocusLogs = (id: number) => {
@@ -510,6 +553,7 @@ export default function Home() {
                       selectedLineId={selectedMainLineId}
                       onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
                       onInsertMarker={insertMarkerAbove}
+                      onRemoveLinesAbove={removeLinesAbove}
                       lineNumbers={mainLineNumbers}
                       timestamps={timestamps}
                       arrival={arrival}
