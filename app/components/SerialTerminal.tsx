@@ -25,6 +25,8 @@ const ROW_BUTTON_SIZE = 20;
 const ROW_BUTTON_GAP = 4;
 // Width of the remove lines above button, which shows an arrow next to its icon, in px
 const REMOVE_LINES_BUTTON_WIDTH = 28;
+// Muted red of the remove lines above button, visible without standing out
+const REMOVE_LINES_COLOR = '#d9686e';
 
 /** Line number gutter: number shown for each line index, and digit count of the widest number */
 export type LineNumbers = {
@@ -261,7 +263,7 @@ const SerialTerminal: React.FC<SerialTerminalProps> = ({
               size="small"
               onClick={() => onRemoveLinesAbove(hoveredRow.id)}
               // Left of the insert marker button
-              sx={{ ...rowButtonSx(onInsertMarker ? 1 : 0, REMOVE_LINES_BUTTON_WIDTH), color: 'error.main' }}
+              sx={{ ...rowButtonSx(onInsertMarker ? 1 : 0, REMOVE_LINES_BUTTON_WIDTH), color: REMOVE_LINES_COLOR }}
             >
               <DeleteOutlineIcon sx={{ fontSize: 16 }} />
               <ArrowUpwardIcon sx={{ fontSize: 12, ml: '-4px', transform: 'scale(0.7, 1.4)' }} />
