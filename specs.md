@@ -31,6 +31,10 @@ The app uses a **dark theme** throughout.
 
 The main window (default 1600×1200, resizable) is divided horizontally into two panes.
 
+### Title bar (Linux)
+
+On Linux under Wayland, the title bar (application name, minimize / maximize / close buttons) is compact: about 25px high instead of the 47px the system theme gives by default, so the logs get more room. Windows and macOS keep their native title bar.
+
 ### Terminals pane (left, fills all remaining width)
 A vertical flex column containing:
 
