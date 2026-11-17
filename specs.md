@@ -159,6 +159,12 @@ A marker is a numbered line inserted by the user to delimit a part of the log, e
 - **Style**: bold violet text (`#c586c0`) on a light tint of it (`rgba(197,134,192,0.12)`), unless the row is selected.
 - **Behavior**: a marker is not processed by the highlight rules (`marker_payload`, text HTML-escaped). It is flagged `matched`, so it also appears in the focus terminal and delimits the focus lines. It is recorded in the log store (visible to MCP clients) and written by Save like any line. Refresh keeps markers as markers: the log store records the marker flag. To go back to a marker, search for `MARK`.
 
+### Removing the lines above a line
+- **Button**: hovering a row of the main terminal also shows a **Remove the lines above** button (trash can with an up arrow, red), just left of the [Insert a marker above](#markers) button. It is placed like that button: a single button over the list, at the height of the row under the pointer, not moved by horizontal scrolling. It is 28px wide, to fit the arrow, and extends to the left.
+- **Effect**: clicking it removes every line above that row; the row itself and the lines below are kept. The focus lines among the removed lines leave the focus terminal too. There is no confirmation, and the lines cannot be restored. Line numbers start again at 1 from the kept line. The marker numbering goes on, since markers remain in the log.
+- **Scroll**: each terminal is scrolled up by the height of its removed rows (lines hidden by a `remove` rule take no row), before the browser paints, so the view keeps showing the same lines. A terminal with [auto-scroll](#auto-scroll) enabled is left at the end of the log. The scroll does not change the auto-scroll state.
+- **Backend**: calls [`clear_logs_before`](#clear_logs_beforebefore_id), so MCP clients see the same log.
+
 ### Send bar
 `SendBar` component, under the main terminal, sends text to the serial port.
 
@@ -191,7 +197,7 @@ Enabled by the **Show minimap** setting of the [Config tab](#config-tab) (on by 
 
 ### Line selection / highlight
 - Clicking a line highlights the entire row with `rgba(255,255,255,0.12)` background
-- The row under the pointer is highlighted more lightly, with `rgba(255,255,255,0.06)` layered over its background (so a marker keeps its tint), in both terminals; a selected row keeps only the selection highlight. The row is the one at the pointer height (see [Markers](#markers)), so it stays highlighted while the pointer is over the insert marker button. The line number and timestamp gutter follow it
+- The row under the pointer is highlighted more lightly, with `rgba(255,255,255,0.06)` layered over its background (so a marker keeps its tint), in both terminals; a selected row keeps only the selection highlight. The row is the one at the pointer height (see [Markers](#markers)), so it stays highlighted while the pointer is over the insert marker or remove lines above buttons. The line number and timestamp gutter follow it
 - Clicking the same line again deselects it
 - Text selection (copy-paste) is preserved: if `window.getSelection().toString()` is non-empty when `mouseup/click` fires, the click is ignored
 - The selected line ID can be controlled externally via a `selectedLineId` prop (used by the focus panel)
@@ -430,7 +436,7 @@ struct AppState {
 }
 ```
 
-`publish_lock` is taken by every change of the log store together with its event (`publish_one`, `publish_append`, `publish_replace`, `insert_marker`, both `clear_logs`), so the window receives the changes in the order of the store. `refresh` relies on it to replace the log without losing the lines received meanwhile.
+`publish_lock` is taken by every change of the log store together with its event (`publish_one`, `publish_append`, `publish_replace`, `insert_marker`, both `clear_logs`, `clear_logs_before`), so the window receives the changes in the order of the store. `refresh` relies on it to replace the log without losing the lines received meanwhile.
 
 ```rust
 ```
@@ -476,6 +482,9 @@ Compiles and stores highlight rules. Validates regexes (invalid rules are skippe
 
 #### `clear_logs()`
 Clears the [log store](#log-store) and resets the marker numbering. Called when the user clears the main log (Clear button or Ctrl+Shift+R). Unlike the MCP `clear_logs` tool, it does not emit `logs-cleared`, so the focus panel is left as the user chose.
+
+#### `clear_logs_before(before_id)`
+Removes from the [log store](#log-store) every line above the line `before_id`, which is kept (nothing is removed when that line is no longer in the store). Called when the user [removes the lines above a line](#removing-the-lines-above-a-line). Like `clear_logs`, it emits nothing, since the window already removed them. The marker numbering is not reset, and the removed lines are not counted as dropped.
 
 #### `watch_file(path)`
 Stops any running file follow, reads the file, replaces the logs with its lines, then spawns the follow loop described in [File Follow](#file-follow-tail--f). Returns an error if the file cannot be read. Each Follow starts a new session (`file_watch_session`): a loop whose session was replaced exits at its next check, without emitting `file-watch-stopped`, so a single loop ever follows a file.
@@ -632,6 +641,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 | `serial-data`, `serial-datas-append` | append |
 | `serial-datas` | replace the whole buffer |
 | Insert a marker above a line (`insert_marker` command) | insert before that line |
+| Remove the lines above a line (`clear_logs_before` command) | remove the records before that line |
 | Clear button / Ctrl+Shift+R (`clear_logs` command) | clear |
 | MCP `clear_logs` tool (then `logs-cleared`) | clear |
 
@@ -647,7 +657,7 @@ Implemented via `emit_system_msg(app, msg)` which allocates a message ID from th
 
 Automatic save of the serial log to files (`log_file.rs`, `LogFiles` in `AppState`), set in the [Config tab](#config-tab). Written by the backend as lines are published, so nothing is lost when the webview is busy.
 
-- **Lines written**: the lines published one by one with `publish_one`, which are the lines received from the serial port (non-ASCII bytes included, as their hex strings), the [system messages](#system-messages), the markers appended at the end of the log (Ctrl+M, toolbar button) and the [sent lines](#send-bar). Lines of an opened or followed file (already on disk), demo lines and markers [inserted above a line](#markers) (the file is never rewritten) are not written. Clearing the logs or Refresh does not change the files.
+- **Lines written**: the lines published one by one with `publish_one`, which are the lines received from the serial port (non-ASCII bytes included, as their hex strings), the [system messages](#system-messages), the markers appended at the end of the log (Ctrl+M, toolbar button) and the [sent lines](#send-bar). Lines of an opened or followed file (already on disk), demo lines and markers [inserted above a line](#markers) (the file is never rewritten) are not written. Clearing the logs, removing the lines above a line or Refresh does not change the files.
 - **Sessions**: each successful `open_port` starts a session, so the next line opens a new file; an automatic reconnection continues the same file. Nothing is written before the first connection since launch (no file holding only e.g. `MCP server listening`). After a disconnection, lines (system messages, markers) still go to the last file.
 - **Folder**: the chosen folder, or by default `KazeSerial/logs` in the user data folder (`app.path().data_dir()`: `~/.local/share/KazeSerial/logs` on Linux, `%APPDATA%\KazeSerial\logs` on Windows). The installation folder is not used, as it is usually read-only (`.deb`, `.msi`, AppImage). The folder is created when missing.
 - **File names**: `kazeserial_YYYY-MM-DD_HH-mm-ss.log`, the local time the file is created, with a `_2`, `_3`... suffix when the name is taken (files created within the same second).
