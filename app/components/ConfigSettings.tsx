@@ -1,0 +1,225 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
+import Checkbox from '@mui/material/Checkbox';
+import Divider from '@mui/material/Divider';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import McpSettings from './McpSettings';
+import ColorPickerButton from './ColorPickerButton';
+import SectionTitle from './SectionTitle';
+import Tooltip from '@mui/material/Tooltip';
+import type { SxProps, Theme } from '@mui/material/styles';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
+import { AppConfig } from '../types/AppConfig';
+import { formatTimestamp, TIMESTAMP_FORMATS } from '../utils/timestamp';
+
+const CUSTOM_FORMAT = 'custom';
+// Fixed time used to preview a custom pattern
+const PREVIEW_TIME = new Date(2026, 9, 9, 14, 3, 27, 512).getTime();
+
+interface IntegerFieldProps {
+  label: string;
+  value: number;
+  disabled?: boolean;
+  min?: number;
+  step?: number;
+  onChange: (value: number) => void;
+}
+
+/** Field for an integer ≥ `min` (0 by default): valid values are saved as typed, the saved value is shown again on blur */
+const IntegerField: React.FC<IntegerFieldProps> = ({ label, value, disabled, min = 0, step = 100, onChange }) => {
+  // Text being typed, kept while it is not a valid value
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const onTextChange = (text: string) => {
+    setDraft(text);
+    const number = Number(text);
+    if (text.trim() !== '' && Number.isInteger(number) && number >= min) {
+      onChange(number);
+    }
+  };
+
+  return (
+    <TextField
+      label={label}
+      type="number"
+      size="small"
+      value={draft ?? String(value)}
+      disabled={disabled}
+      onChange={(e) => onTextChange(e.target.value)}
+      onBlur={() => setDraft(null)}
+      slotProps={{ htmlInput: { min, step } }}
+      sx={{ width: 120 }}
+    />
+  );
+};
+
+// Settings that are on or off
+type BooleanSetting = { [K in keyof AppConfig]: AppConfig[K] extends boolean ? K : never }[keyof AppConfig];
+
+interface ConfigSettingsProps {
+  config: AppConfig;
+  onConfigChange: (changes: Partial<AppConfig>) => void;
+}
+
+const ConfigSettings: React.FC<ConfigSettingsProps> = ({ config, onConfigChange }) => {
+  // Checkbox of an on / off setting
+  const checkbox = (label: string, setting: BooleanSetting, props?: { disabled?: boolean; sx?: SxProps<Theme> }) => (
+    <FormControlLabel
+      label={label}
+      {...props}
+      control={<Checkbox size="small" checked={config[setting]} onChange={(e) => onConfigChange({ [setting]: e.target.checked })} />}
+    />
+  );
+
+  // "Custom" stays selected while editing, even if the typed pattern matches a preset
+  const [customFormat, setCustomFormat] = useState(false);
+  const isCustomFormat = customFormat || !TIMESTAMP_FORMATS.includes(config.timestampFormat);
+
+  // Folder of the log files when none is chosen, given by the backend
+  const [defaultLogFolder, setDefaultLogFolder] = useState('');
+  useEffect(() => {
+    invoke<string>('get_default_log_folder')
+      .then(setDefaultLogFolder)
+      .catch((err: unknown) => console.error(err));
+  }, []);
+  const logFolder = config.logFileFolder || defaultLogFolder;
+
+  const chooseLogFolder = async () => {
+    const folder = await open({ directory: true, defaultPath: logFolder || undefined });
+    if (typeof folder === 'string') onConfigChange({ logFileFolder: folder });
+  };
+
+  const onFormatSelect = (value: string) => {
+    setCustomFormat(value === CUSTOM_FORMAT);
+    if (value !== CUSTOM_FORMAT) {
+      onConfigChange({ timestampFormat: value });
+    }
+  };
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+      <SectionTitle>Display</SectionTitle>
+      {checkbox('Show line numbers', 'showLineNumbers')}
+      {checkbox('Show minimap', 'showMinimap')}
+      {checkbox('Show timestamps', 'showTimestamps')}
+      {checkbox('Include timestamps in copied and saved text', 'timestampsInText', { disabled: !config.showTimestamps, sx: { pl: 3 } })}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 3 }}>
+        {checkbox('Only after inactivity', 'timestampsAfterInactivityOnly', { disabled: !config.showTimestamps })}
+        <IntegerField
+          label="Delay (ms)"
+          value={config.timestampInactivityMs}
+          disabled={!config.showTimestamps || !config.timestampsAfterInactivityOnly}
+          onChange={(timestampInactivityMs) => onConfigChange({ timestampInactivityMs })}
+        />
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, pl: 3, pt: 1, flexWrap: 'wrap' }}>
+        <TextField
+          select
+          label="Format"
+          size="small"
+          value={isCustomFormat ? CUSTOM_FORMAT : config.timestampFormat}
+          disabled={!config.showTimestamps}
+          onChange={(e) => onFormatSelect(e.target.value)}
+          sx={{ minWidth: 220 }}
+        >
+          {TIMESTAMP_FORMATS.map(format => (
+            <MenuItem key={format} value={format}>{format}</MenuItem>
+          ))}
+          <MenuItem value={CUSTOM_FORMAT}>Custom…</MenuItem>
+        </TextField>
+        {isCustomFormat && (
+          <TextField
+            label="Pattern"
+            size="small"
+            value={config.timestampFormat}
+            disabled={!config.showTimestamps}
+            onChange={(e) => onConfigChange({ timestampFormat: e.target.value })}
+            helperText={`YYYY MM DD HH mm ss SSS — e.g. ${formatTimestamp(PREVIEW_TIME, config.timestampFormat)}`}
+            sx={{ minWidth: 220 }}
+          />
+        )}
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pt: 1 }}>
+        {checkbox('Highlight new lines', 'highlightNewLines')}
+        <IntegerField
+          label="Duration (ms)"
+          value={config.newLineHighlightMs}
+          disabled={!config.highlightNewLines}
+          onChange={(newLineHighlightMs) => onConfigChange({ newLineHighlightMs })}
+        />
+        <Tooltip title="Highlight color (the alpha sets how visible it is)" placement="top" arrow>
+          <span>
+            <ColorPickerButton
+              alpha
+              value={config.newLineHighlightColor}
+              disabled={!config.highlightNewLines}
+              opacity={config.highlightNewLines ? 1 : 0.4}
+              onChange={(newLineHighlightColor) => onConfigChange({ newLineHighlightColor })}
+            />
+          </span>
+        </Tooltip>
+      </Box>
+      <Divider sx={{ my: 1.5 }} />
+      <SectionTitle>Serial</SectionTitle>
+      {checkbox('Auto-reconnect serial port', 'autoReconnect')}
+      <Divider sx={{ my: 1.5 }} />
+      <SectionTitle>Log files</SectionTitle>
+      {checkbox('Save logs to files', 'logFileEnabled')}
+      <Typography variant="caption" sx={{ pl: 4, pb: 1, color: 'text.secondary' }}>
+        Lines received from and sent to the serial port, system messages and markers, as Save writes them. A new file on each connection.
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, pl: 3 }}>
+        <TextField
+          label="Folder"
+          size="small"
+          value={logFolder}
+          disabled={!config.logFileEnabled}
+          helperText={config.logFileFolder ? undefined : 'Default folder'}
+          slotProps={{ input: { readOnly: true } }}
+          sx={{ flex: 1, minWidth: 0 }}
+        />
+        <Button variant="outlined" disabled={!config.logFileEnabled} onClick={chooseLogFolder} sx={{ height: 40 }}>
+          Choose…
+        </Button>
+        {config.logFileFolder && (
+          <Tooltip title="Use the default folder" placement="top" arrow>
+            <Button disabled={!config.logFileEnabled} onClick={() => onConfigChange({ logFileFolder: '' })} sx={{ height: 40 }}>
+              Default
+            </Button>
+          </Tooltip>
+        )}
+      </Box>
+      {checkbox('Rotate files', 'logFileRotation', { disabled: !config.logFileEnabled, sx: { pl: 3, pt: 1 } })}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 6, pt: 1 }}>
+        <IntegerField
+          label="Max files"
+          value={config.logFileMaxFiles}
+          min={1}
+          step={1}
+          disabled={!config.logFileEnabled || !config.logFileRotation}
+          onChange={(logFileMaxFiles) => onConfigChange({ logFileMaxFiles })}
+        />
+        <IntegerField
+          label="Max lines per file"
+          value={config.logFileMaxLines}
+          min={1}
+          step={1000}
+          disabled={!config.logFileEnabled || !config.logFileRotation}
+          onChange={(logFileMaxLines) => onConfigChange({ logFileMaxLines })}
+        />
+      </Box>
+      <Divider sx={{ my: 1.5 }} />
+      <SectionTitle>MCP server</SectionTitle>
+      <McpSettings port={config.mcpPort} onPortChange={(mcpPort) => onConfigChange({ mcpPort })} />
+    </Box>
+  );
+};
+
+export default ConfigSettings;

@@ -13,37 +13,94 @@ import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import RefreshIcon from '@mui/icons-material/Refresh';
+import SearchIcon from '@mui/icons-material/Search';
+import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
 import SaveIcon from '@mui/icons-material/Save';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import LastPageIcon from '@mui/icons-material/LastPage';
 import FirstPageIcon from '@mui/icons-material/FirstPage';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
-import Tooltip from '@mui/material/Tooltip';
-import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import ControlPanel from './components/ControlPanel';
-import SerialTerminal from './components/SerialTerminal';
+import ToolbarButton from './components/ToolbarButton';
+import SearchBar from './components/SearchBar';
+import SendBar from './components/SendBar';
+import { useLogSearch } from './hooks/useLogSearch';
+import SerialTerminal, { type Arrival, type LineNumbers, type Timestamps } from './components/SerialTerminal';
+import { MINIMAP_WIDTH } from './components/LogMinimap';
+import { formatTimestamp, isTimestampShown, timestampColumnText, timestampWidth } from './utils/timestamp';
+import { useAppConfig } from './hooks/useAppConfig';
+import { useTerminalRows } from './hooks/useTerminalRows';
 import { SerialMessage } from './types/SerialMessage';
 
 // Shared timestamp for demo log generation — reset on each regenerate call
 let demoTime = 0;
 
-/// State of the embedded MCP server an agent connects to, as reported by the backend.
-type McpStatus = {
-  running: boolean;
-  url: string | null;
-  port: number | null;
-};
-
 const darkTheme = createTheme({
   palette: { mode: 'dark' },
   typography: { button: { textTransform: 'none' } },
 });
+
+// Scrolls the list so that row `rowIndex` is at its bottom
+const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
+  listRef.current?.scrollToRow({ align: 'end', behavior, index: rowIndex });
+};
+
+// Ids increase along the log, so a line is found by binary search. Falls back to a linear
+// search in case lines from concurrent sources were appended out of id order.
+const findLogIndex = (lines: SerialMessage[], id: number): number => {
+  let low = 0;
+  let high = lines.length - 1;
+  while (low <= high) {
+    let middle = (low + high) >> 1;
+    // A marker inserted in the middle of the log has a larger id than the lines around it, so
+    // the next line that is not a marker is compared instead
+    while (middle < high && lines[middle].marker && lines[middle].id !== id) middle++;
+    if (lines[middle].id === id) return middle;
+    if (lines[middle].id < id) low = middle + 1;
+    else high = middle - 1;
+  }
+  return lines.findIndex(line => line.id === id);
+};
+
+// Copy of `lines` with `line` inserted at `index`
+const insertAt = (lines: SerialMessage[], index: number, line: SerialMessage): SerialMessage[] =>
+  [...lines.slice(0, index), line, ...lines.slice(index)];
+
+// Appends a numbered marker line, e.g. to delimit a reproduction attempt
+const addMarker = () => {
+  invoke<void>('add_marker').catch((err: unknown) => console.error(err));
+};
+
+/**
+ * Updates of a list of lines. Appended lines are applied once per frame: copying the whole list
+ * for each line received would make receiving a long log quadratic, and render the page for each
+ * line. Replacing the list drops the lines still waiting to be appended.
+ */
+const createLineList = (setLines: React.Dispatch<React.SetStateAction<SerialMessage[]>>) => {
+  let pending: SerialMessage[] = [];
+  let frame = 0;
+  return {
+    append(lines: SerialMessage[]) {
+      pending.push(...lines);
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const batch = pending;
+        pending = [];
+        setLines(prev => prev.concat(batch));
+      });
+    },
+    replace(lines: SerialMessage[]) {
+      pending = [];
+      cancelAnimationFrame(frame);
+      frame = 0;
+      setLines(lines);
+    },
+  };
+};
 
 /** Generates synthetic UART-style log lines for demo purposes */
 const generateDemoLogs = (count: number): string[] => {
@@ -73,16 +130,32 @@ export default function Home() {
   const ignoreMainScrollUntilRef = useRef(0);
   const ignoreFocusScrollUntilRef = useRef(0);
 
+  const [config, updateConfig] = useAppConfig();
   const [logs, setLogs] = useState<SerialMessage[]>([]);
   const [focusLogs, setFocusLogs] = useState<SerialMessage[]>([]);
+  const [mainList] = useState(() => createLineList(setLogs));
+  const [focusList] = useState(() => createLineList(setFocusLogs));
+  const mainRows = useTerminalRows(logs);
+  const focusRows = useTerminalRows(focusLogs);
   const [selectedMainLineId, setSelectedMainLineId] = useState<number | null>(null);
   const [isMainAutoScrollEnabled, setIsMainAutoScrollEnabled] = useState(true);
   const [isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled] = useState(true);
-  const [isFileWatching, setIsFileWatching] = useState(false);
-  const [mcpUrl, setMcpUrl] = useState<string | null>(null);
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(true);
   const [isFocusPanelOpen, setIsFocusPanelOpen] = useState(true);
   const [mainMenuAnchor, setMainMenuAnchor] = useState<null | HTMLElement>(null);
+  // The serial port is open, so text can be sent to it
+  const [isSerialConnected, setIsSerialConnected] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Scrolls the main terminal to a search match; auto-scroll is turned off so new lines do not
+  // pull the view away from it
+  const revealMainLine = (line: number) => {
+    setIsMainAutoScrollEnabled(false);
+    ignoreMainScrollUntilRef.current = Date.now() + 250;
+    listRefMain.current?.scrollToRow({ align: 'center', behavior: 'auto', index: line });
+  };
+  const search = useLogSearch(logs, revealMainLine);
+  const openSearch = search.open;
 
   // Demo: send a batch of generated lines to the backend for processing and append
   const appendLogs = (count: number) => {
@@ -97,46 +170,152 @@ export default function Home() {
       .catch((err: unknown) => console.error(err));
   };
 
-  const clearLogs = () => setLogs([]);
-  const clearFocusLogs = () => setFocusLogs([]);
+  const clearLogs = () => mainList.replace([]);
+  const clearFocusLogs = () => focusList.replace([]);
 
+  // User clear: also empties the backend log store, so MCP clients see the same log
+  const onClearLogs = () => {
+    clearLogs();
+    invoke<void>('clear_logs').catch((err: unknown) => console.error(err));
+  };
+
+  // Keyboard shortcuts: Ctrl+Shift+R clears the main and focus logs, Ctrl+F opens the search bar
+  // (or selects its text when it is already open), Ctrl+M appends a marker
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'R') {
-        e.preventDefault();
-        clearLogs();
-        clearFocusLogs();
+      if (!e.ctrlKey) return;
+      const key = e.key.toLowerCase();
+      if (e.shiftKey && key === 'r') {
+        mainList.replace([]);
+        focusList.replace([]);
+        invoke<void>('clear_logs').catch((err: unknown) => console.error(err));
+      } else if (!e.shiftKey && key === 'f') {
+        openSearch();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      } else if (!e.shiftKey && key === 'm') {
+        addMarker();
+      } else {
+        return;
       }
+      e.preventDefault();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [openSearch, mainList, focusList]);
+
+  // Log files are written by the backend, which gets their settings at launch and on every
+  // change. Lines are written as Save writes them, so it also gets the timestamp settings.
+  const { logFileEnabled, logFileFolder, logFileRotation, logFileMaxFiles, logFileMaxLines } = config;
+  const { showTimestamps, timestampsInText, timestampFormat, timestampsAfterInactivityOnly, timestampInactivityMs } = config;
+  useEffect(() => {
+    const settings = {
+      enabled: logFileEnabled,
+      folder: logFileFolder || null,
+      rotation: logFileRotation,
+      maxFiles: logFileMaxFiles,
+      maxLines: logFileMaxLines,
+      timestampsInText: showTimestamps && timestampsInText,
+      timestampFormat,
+      inactivityMs: timestampsAfterInactivityOnly ? timestampInactivityMs : null,
+    };
+    invoke<void>('set_log_file_settings', { settings }).catch((err: unknown) => console.error(err));
+  }, [logFileEnabled, logFileFolder, logFileRotation, logFileMaxFiles, logFileMaxLines,
+    showTimestamps, timestampsInText, timestampFormat, timestampsAfterInactivityOnly, timestampInactivityMs]);
+
+  // Inserts a marker just above a line of the main log, with the timestamp of the line above it
+  // (none for the first line). In the focus log, it goes after the closest focus line above it,
+  // or else before the closest focus line below it
+  const insertMarkerAbove = (lineId: number) => {
+    const index = findLogIndex(logs, lineId);
+    if (index < 0) return;
+    let focusAboveId: number | undefined;
+    for (let i = index - 1; i >= 0 && focusAboveId === undefined; i--) {
+      if (logs[i].matched) focusAboveId = logs[i].id;
+    }
+    let focusBelowId: number | undefined;
+    for (let i = index; i < logs.length && focusAboveId === undefined && focusBelowId === undefined; i++) {
+      if (logs[i].matched) focusBelowId = logs[i].id;
+    }
+    const timestamp = index > 0 ? logs[index - 1].timestamp ?? null : null;
+    invoke<SerialMessage>('insert_marker', { beforeId: lineId, timestamp })
+      .then((payload) => {
+        const marker = { ...payload, arrivedAt: Date.now() };
+        // Positions are looked up again, the logs may have changed meanwhile. A Refresh may
+        // already have shown the marker, as it reads the lines from the backend
+        const isShown = (lines: SerialMessage[]) => lines.some(line => line.id === marker.id);
+        setLogs(prev => {
+          const at = findLogIndex(prev, lineId);
+          return at < 0 || isShown(prev) ? prev : insertAt(prev, at, marker);
+        });
+        setFocusLogs(prev => {
+          if (isShown(prev)) return prev;
+          const above = focusAboveId === undefined ? -1 : prev.findIndex(line => line.id === focusAboveId);
+          if (above >= 0) return insertAt(prev, above + 1, marker);
+          const below = focusBelowId === undefined ? -1 : prev.findIndex(line => line.id === focusBelowId);
+          return insertAt(prev, below >= 0 ? below : prev.length, marker);
+        });
+      })
+      .catch((err: unknown) => console.error(err));
+  };
 
   // Click on a focus row: scroll the main terminal to the matching line and highlight it
   const onClickFocusLogs = (id: number) => {
-    const index = logs.findIndex(log => log.id === id);
+    const index = findLogIndex(logs, id);
     if (index !== -1) {
       listRefMain.current?.scrollToRow({ align: 'center', behavior: 'smooth', index });
       setSelectedMainLineId(prev => prev === id ? null : id);
     }
   };
 
-  // Re-apply current highlight rules to all existing raw lines
-  const onClickRefreshAll = () => {
-    const rawLines = logs.map(log => log.rawline ?? log.message);
-    clearFocusLogs();
-    clearLogs();
-    invoke<void>('add_logs_line', { lines: rawLines })
-      .catch((err: unknown) => console.error(err));
+  // Line numbers are positions in the main log; a focus line shows the number of the same
+  // line in the main log. The gutter width follows the largest number.
+  const lineNumberDigits = String(logs.length).length;
+  const mainLineNumbers: LineNumbers | undefined = config.showLineNumbers
+    ? { numberOf: (index) => index + 1, digits: lineNumberDigits }
+    : undefined;
+  const focusLineNumbers: LineNumbers | undefined = config.showLineNumbers
+    ? {
+      numberOf: (index) => {
+        const mainIndex = findLogIndex(logs, focusLogs[index].id);
+        return mainIndex < 0 ? undefined : mainIndex + 1;
+      },
+      digits: lineNumberDigits,
+    }
+    : undefined;
+
+  const arrival: Arrival | undefined = config.highlightNewLines
+    ? { durationMs: config.newLineHighlightMs, color: config.newLineHighlightColor }
+    : undefined;
+
+  const timestamps: Timestamps | undefined = config.showTimestamps
+    ? {
+      inText: config.timestampsInText,
+      inactivityMs: config.timestampsAfterInactivityOnly ? config.timestampInactivityMs : undefined,
+      format: config.timestampFormat,
+      width: timestampWidth(config.timestampFormat),
+    }
+    : undefined;
+
+  // Text written by Save: the raw line, prefixed with the timestamp column when timestamps are
+  // part of the text (blanks when the line shows no timestamp), as on screen
+  const savedLineText = (lines: SerialMessage[], index: number) => {
+    const msg = lines[index];
+    const text = msg.rawline ?? msg.message;
+    if (!timestamps?.inText) return text;
+    const timestamp = msg.timestamp != null && isTimestampShown(lines, index, timestamps.inactivityMs)
+      ? formatTimestamp(msg.timestamp, timestamps.format)
+      : '';
+    return timestampColumnText(timestamp, timestamps.width) + text;
   };
 
-  const addSingleLog = (log: SerialMessage) => {
-    setLogs(prev => [...prev, log]);
+  // Save: writes `lines` as shown to a file chosen by the user
+  const saveLines = async (lines: SerialMessage[]) => {
+    const text = lines.map((_, index) => savedLineText(lines, index) + '\n').join('');
+    const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
+    if (filePath) await writeTextFile(filePath, text);
   };
 
-  const addSingleFocusLog = (log: SerialMessage) => {
-    setFocusLogs(prev => [...prev, log]);
-  };
   useEffect(() => {
     if (isMainAutoScrollEnabled && listRefMain.current && logs.length > 0) {
       scrollToRow(listRefMain, logs.length - 1, 'auto');
@@ -148,36 +327,30 @@ export default function Home() {
   }, [logs, focusLogs, isMainAutoScrollEnabled, isFocusAutoScrollEnabled]);
 
   useEffect(() => {
+    // Appended lines are stamped with their arrival time for the new line highlight; lines
+    // replacing the whole log (file open, Refresh) are not
     const unlisten_serial_data = listen<SerialMessage>('serial-data', (e) => {
-      addSingleLog(e.payload);
-      if (e.payload.matched) addSingleFocusLog(e.payload);
+      const line = { ...e.payload, arrivedAt: Date.now() };
+      mainList.append([line]);
+      if (line.matched) focusList.append([line]);
     });
-    const unlisten_serial_datas = listen<SerialMessage[]>('serial-datas', (e) => {
-      setLogs(e.payload);
-    });
-    const unlisten_serial_datas_focus = listen<SerialMessage[]>('serial-datas-focus', (e) => {
-      setFocusLogs(e.payload);
-    });
+    const unlisten_serial_datas = listen<SerialMessage[]>('serial-datas', (e) => mainList.replace(e.payload));
+    const unlisten_serial_datas_focus = listen<SerialMessage[]>('serial-datas-focus', (e) => focusList.replace(e.payload));
     const unlisten_serial_datas_append = listen<SerialMessage[]>('serial-datas-append', (e) => {
-      setLogs(prev => [...prev, ...e.payload]);
+      const arrivedAt = Date.now();
+      mainList.append(e.payload.map(line => ({ ...line, arrivedAt })));
     });
     const unlisten_serial_datas_focus_append = listen<SerialMessage[]>('serial-datas-focus-append', (e) => {
-      setFocusLogs(prev => [...prev, ...e.payload]);
-    });
-    const unlisten_file_watch_stopped = listen('file-watch-stopped', () => {
-      setIsFileWatching(false);
+      const arrivedAt = Date.now();
+      focusList.append(e.payload.map(line => ({ ...line, arrivedAt })));
     });
     // Emitted when an MCP client calls clear_logs, so the window stays in sync
     // with what the agent just did to the shared buffer.
     const unlisten_logs_cleared = listen('logs-cleared', () => {
-      clearLogs();
-      clearFocusLogs();
+      mainList.replace([]);
+      focusList.replace([]);
     });
-
-    // The backend keeps the MCP server alive across webview reloads.
-    invoke<McpStatus>('get_mcp_status')
-      .then(status => setMcpUrl(status.running ? status.url : null))
-      .catch((err: unknown) => console.error(err));
+    const unlisten_serial_connection = listen<boolean>('serial-connection', (e) => setIsSerialConnected(e.payload));
 
     return () => {
       unlisten_serial_data.then(f => f());
@@ -185,24 +358,10 @@ export default function Home() {
       unlisten_serial_datas_focus.then(f => f());
       unlisten_serial_datas_append.then(f => f());
       unlisten_serial_datas_focus_append.then(f => f());
-      unlisten_file_watch_stopped.then(f => f());
       unlisten_logs_cleared.then(f => f());
+      unlisten_serial_connection.then(f => f());
     };
-  }, []);
-
-  // Start or stop the MCP server an agent connects to. The backend also prints the
-  // URL into the log as a system message, so it stays visible and copyable.
-  const onToggleMcpServer = () => {
-    const command = mcpUrl ? 'stop_mcp_server' : 'start_mcp_server';
-    invoke<McpStatus>(command)
-      .then(status => setMcpUrl(status.running ? status.url : null))
-      .catch((err: unknown) => console.error(err));
-  };
-
-
-  const scrollToRow = (listRef: React.RefObject<ListImperativeAPI>, rowIndex: number, behavior: 'auto' | 'smooth' = 'smooth') => {
-    listRef.current?.scrollToRow({ align: 'end', behavior, index: rowIndex });
-  };
+  }, [mainList, focusList]);
 
   const onToggleAutoScrollFromLogs = () => {
     setIsMainAutoScrollEnabled((prev) => {
@@ -230,11 +389,16 @@ export default function Home() {
     });
   };
 
+  // Distance between the buttons over the main terminal and its right edge, so they stay clear of
+  // the scrollbar and the minimap
+  const mainOverlayRight = 28 + (config.showMinimap ? MINIMAP_WIDTH : 0);
+
   const handleScroll = (
+    event: SyntheticEvent<HTMLDivElement>,
     isAutoScrollEnabled: boolean,
     setIsAutoScrollEnabled: React.Dispatch<React.SetStateAction<boolean>>,
     ignoreScrollUntilRef: React.MutableRefObject<number>
-  ) => (event: SyntheticEvent<HTMLDivElement>) => {
+  ) => {
     if (Date.now() < ignoreScrollUntilRef.current || event.nativeEvent == null) return;
     const target = event.nativeEvent.target as HTMLDivElement;
     const diff = target.scrollHeight - target.clientHeight - target.scrollTop;
@@ -293,202 +457,35 @@ export default function Home() {
                   height: '70%',
                 }}
                 >
-                <Box sx={{ height: '100%', position: 'relative' }}>
+                <Box sx={{ height: '100%', position: 'relative', display: 'flex', flexDirection: 'column' }}>
                   <Box
                     sx={{
                       position: 'absolute',
                       top: 10,
-                      right: 28,
+                      right: mainOverlayRight,
                       zIndex: 2,
                       display: 'flex',
                       gap: 1,
                     }}
                   >
-                    <Tooltip title="Auto-scroll" placement="top" arrow>
-                    <IconButton
-                      aria-label="toggle auto-scroll"
-                      aria-pressed={isMainAutoScrollEnabled}
-                      size="medium"
-                      color="inherit"
-                      onClick={onToggleAutoScrollFromLogs}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: isMainAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: isMainAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
+                    <ToolbarButton title="Search (Ctrl+F)" label="search" active={search.isOpen} onClick={search.isOpen ? search.close : search.open}>
+                      <SearchIcon fontSize="medium" />
+                    </ToolbarButton>
+                    <ToolbarButton title="Auto-scroll" label="toggle auto-scroll" active={isMainAutoScrollEnabled} onClick={onToggleAutoScrollFromLogs}>
                       <KeyboardArrowDownIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Apply current highlight rules to all logs (Usefull when rules have changed)" placement="top" arrow>
-                    <IconButton
-                      aria-label="refresh logs"
-                      size="medium"
-                      color="inherit"
-                      onClick={onClickRefreshAll}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
-                      <RefreshIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Load log file" placement="top" arrow>
-                    <IconButton
-                      aria-label="load log file"
-                      size="medium"
-                      color="inherit"
-                      onClick={async () => {
-                        const selected = await openDialog({ directory: false, multiple: false }).catch(() => undefined);
-                        if (selected) {
-                          const contents = await readTextFile(selected);
-                          const lines = contents.split('\n').filter(l => l.length > 0);
-                          invoke<void>('add_logs_line', { lines, source: selected }).catch((err: unknown) => console.error(err));
-                        }
-                      }}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
-                      <FolderOpenIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title={isFileWatching ? 'Stop following file' : 'Follow file (tail -f)'} placement="top" arrow>
-                    <IconButton
-                      aria-label="follow file"
-                      aria-pressed={isFileWatching}
-                      size="medium"
-                      color="inherit"
-                      onClick={async () => {
-                        if (isFileWatching) {
-                          invoke<void>('stop_file_watch').catch((err: unknown) => console.error(err));
-                          setIsFileWatching(false);
-                        } else {
-                          const selected = await openDialog({ directory: false, multiple: false }).catch(() => undefined);
-                          if (selected) {
-                            invoke<void>('watch_file', { path: selected })
-                              .then(() => setIsFileWatching(true))
-                              .catch((err: unknown) => console.error(err));
-                          }
-                        }
-                      }}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: isFileWatching ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: isFileWatching ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
-                      <PlayCircleOutlineIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip
-                      title={mcpUrl
-                        ? `MCP server running on ${mcpUrl} — click to stop`
-                        : 'Expose these logs to an AI agent over MCP'}
-                      placement="top"
-                      arrow
-                    >
-                    <IconButton
-                      aria-label="toggle MCP server"
-                      aria-pressed={mcpUrl !== null}
-                      size="medium"
-                      color="inherit"
-                      onClick={onToggleMcpServer}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: mcpUrl ? 'rgba(76, 175, 80, 0.28)' : 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: mcpUrl ? 'rgba(76, 175, 80, 0.42)' : 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
-                      <SmartToyIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Save logs to file" placement="top" arrow>
-                    <IconButton
-                      aria-label="save logs to file"
-                      size="medium"
-                      color="inherit"
-                      onClick={async () => {
-                        let buf = '';
-                        for (const msg of logs) {
-                          buf += (msg.rawline ?? msg.message) + '\n';
-                        }
-                        const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
-                        if (filePath) await writeTextFile(filePath, buf);
-                      }}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': {
-                          bgcolor: 'rgba(30, 30, 30, 0.95)',
-                        },
-                      }}
-                    >
+                    </ToolbarButton>
+                    <ToolbarButton title="Insert a marker (Ctrl+M)" label="insert marker" onClick={addMarker}>
+                      <BookmarkAddOutlinedIcon fontSize="medium" />
+                    </ToolbarButton>
+                    <ToolbarButton title="Save logs to file" label="save logs to file" onClick={() => saveLines(logs)}>
                       <SaveIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
-                  <Tooltip title="Clear logs (Ctrl+Shift+R)" placement="top" arrow>
-                  <IconButton
-                    aria-label="clear logs"
-                    size="medium"
-                    color="inherit"
-                    onClick={clearLogs}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
-                    <DeleteOutlineIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
-                    <Tooltip title="More options" placement="top" arrow>
-                    <IconButton
-                      aria-label="more options"
-                      size="medium"
-                      color="inherit"
-                      onClick={(e) => setMainMenuAnchor(e.currentTarget)}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        border: '1px solid #333',
-                        bgcolor: 'rgba(30, 30, 30, 0.75)',
-                        '&:hover': { bgcolor: 'rgba(30, 30, 30, 0.95)' },
-                      }}
-                    >
+                    </ToolbarButton>
+                    <ToolbarButton title="Clear logs (Ctrl+Shift+R)" label="clear logs" onClick={onClearLogs}>
+                      <DeleteOutlineIcon fontSize="medium" />
+                    </ToolbarButton>
+                    <ToolbarButton title="More options" label="more options" onClick={(e) => setMainMenuAnchor(e.currentTarget)}>
                       <MoreVertIcon fontSize="medium" />
-                    </IconButton>
-                    </Tooltip>
+                    </ToolbarButton>
                     <Menu
                       anchorEl={mainMenuAnchor}
                       open={Boolean(mainMenuAnchor)}
@@ -500,12 +497,32 @@ export default function Home() {
                       <MenuItem onClick={() => { regenerateLogs(); setMainMenuAnchor(null); }}>Demo - Clear and add 10 logs</MenuItem>
                     </Menu>
                   </Box>
-                  <SerialTerminal
-                    serial_messages={logs}
-                    listRef={listRefMain}
-                    onScroll={handleScroll(isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
-                    selectedLineId={selectedMainLineId}
-                    onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
+                  {search.isOpen && (
+                    <Box sx={{ position: 'absolute', top: 54, right: mainOverlayRight, zIndex: 2 }}>
+                      <SearchBar search={search} inputRef={searchInputRef} />
+                    </Box>
+                  )}
+                  <Box sx={{ flex: 1, minHeight: 0 }}>
+                    <SerialTerminal
+                      rows={mainRows}
+                      listRef={listRefMain}
+                      onScroll={(event) => handleScroll(event, isMainAutoScrollEnabled, setIsMainAutoScrollEnabled, ignoreMainScrollUntilRef)}
+                      selectedLineId={selectedMainLineId}
+                      onClickRow={(id) => setSelectedMainLineId(prev => prev === id ? null : id)}
+                      onInsertMarker={insertMarkerAbove}
+                      lineNumbers={mainLineNumbers}
+                      timestamps={timestamps}
+                      arrival={arrival}
+                      search={search.isOpen && search.regex
+                        ? { regex: search.regex, current: search.matches[search.currentIndex] }
+                        : undefined}
+                      minimap={config.showMinimap}
+                    />
+                  </Box>
+                  <SendBar
+                    connected={isSerialConnected}
+                    lineEnding={config.sendLineEnding}
+                    onLineEndingChange={(sendLineEnding) => updateConfig({ sendLineEnding })}
                   />
                 </Box>
               </Resizable>
@@ -561,77 +578,24 @@ export default function Home() {
                     gap: 1,
                   }}
                 >
-                  <Tooltip title="Auto-scroll" placement="top" arrow>
-                  <IconButton
-                    aria-label="toggle focus auto-scroll"
-                    aria-pressed={isFocusAutoScrollEnabled}
-                    size="medium"
-                    color="inherit"
-                    onClick={onToggleAutoScrollFromFocus}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: isFocusAutoScrollEnabled ? 'rgba(33, 150, 243, 0.28)' : 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: isFocusAutoScrollEnabled ? 'rgba(33, 150, 243, 0.42)' : 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
+                  <ToolbarButton title="Auto-scroll" label="toggle focus auto-scroll" active={isFocusAutoScrollEnabled} onClick={onToggleAutoScrollFromFocus}>
                     <KeyboardArrowDownIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Save focus logs to file" placement="top" arrow>
-                  <IconButton
-                    aria-label="save focus logs to file"
-                    size="medium"
-                    color="inherit"
-                    onClick={async () => {
-                      let buf = '';
-                      for (const msg of focusLogs) {
-                        buf += (msg.rawline ?? msg.message) + '\n';
-                      }
-                      const filePath = await save({ filters: [{ name: 'export', extensions: ['log'] }] }).catch(() => undefined);
-                      if (filePath) await writeTextFile(filePath, buf);
-                    }}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
+                  </ToolbarButton>
+                  <ToolbarButton title="Save focus logs to file" label="save focus logs to file" onClick={() => saveLines(focusLogs)}>
                     <SaveIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Clear focus logs (Ctrl+Shift+R)" placement="top" arrow>
-                  <IconButton
-                    aria-label="clear focus logs"
-                    size="medium"
-                    color="inherit"
-                    onClick={clearFocusLogs}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      border: '1px solid #333',
-                      bgcolor: 'rgba(30, 30, 30, 0.75)',
-                      '&:hover': {
-                        bgcolor: 'rgba(30, 30, 30, 0.95)',
-                      },
-                    }}
-                  >
+                  </ToolbarButton>
+                  <ToolbarButton title="Clear focus logs (Ctrl+Shift+R)" label="clear focus logs" onClick={clearFocusLogs}>
                     <DeleteOutlineIcon fontSize="medium" />
-                  </IconButton>
-                  </Tooltip>
+                  </ToolbarButton>
                 </Box>
                 <SerialTerminal
-                  serial_messages={focusLogs}
+                  rows={focusRows}
                   listRef={listRefFocus}
-                  onScroll={handleScroll(isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
+                  onScroll={(event) => handleScroll(event, isFocusAutoScrollEnabled, setIsFocusAutoScrollEnabled, ignoreFocusScrollUntilRef)}
                   onClickRow={onClickFocusLogs}
+                  lineNumbers={focusLineNumbers}
+                  timestamps={timestamps}
+                  arrival={arrival}
                 />
               </Box>
               )}
@@ -650,7 +614,7 @@ export default function Home() {
           >
             {/* ControlPanel: always mounted, hidden when panel is collapsed */}
             <Box sx={{ flex: 1, overflow: 'hidden', display: isSettingsPanelOpen ? 'flex' : 'none', flexDirection: 'column' }}>
-              <ControlPanel />
+              <ControlPanel config={config} onConfigChange={updateConfig} />
             </Box>
             {/* Collapsed strip: vertical "Settings" label */}
             {!isSettingsPanelOpen && (

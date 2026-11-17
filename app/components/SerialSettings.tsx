@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
@@ -10,6 +10,7 @@ import Select, { SelectChangeEvent } from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import Typography from '@mui/material/Typography';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 type SerialPortEntry = {
@@ -17,21 +18,49 @@ type SerialPortEntry = {
   deviceLabel: string;
 };
 
-const SerialSettings: React.FC = () => {
+interface SerialSettingsProps {
+  // Applied on Connect: when the port is lost, the backend waits for it and reopens it
+  autoReconnect: boolean;
+}
+
+const SerialSettings: React.FC<SerialSettingsProps> = ({ autoReconnect }) => {
   const [port, setPort] = useState('');
   const [baudRate, setBaudRate] = useState(115200);
   const [ports, setPorts] = useState<SerialPortEntry[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  // The port was lost and the backend is waiting for it to come back
+  const [isReconnecting, setIsReconnecting] = useState(false);
+
+  // Stable, so the mount effect can list the ports: selects the first port only if none is selected
+  const listUart = useCallback(() => {
+    invoke<SerialPortEntry[]>('list_ports')
+      .then((s) => {
+        setPorts(s);
+        setPort(prev => prev || s[0]?.portName || '');
+      })
+      .catch((err: unknown) => {
+        console.error(err);
+      });
+  }, []);
 
   React.useEffect(() => {
     listUart();
     const unlisten = listen('serial-disconnected', () => {
       setIsConnected(false);
     });
+    const unlistenReconnecting = listen('serial-reconnecting', () => setIsReconnecting(true));
+    // Carries the port name: a USB device may come back under another one (ttyACM0 -> ttyACM1)
+    const unlistenReconnected = listen<string>('serial-reconnected', (e) => {
+      setIsReconnecting(false);
+      setPort(e.payload);
+      listUart();
+    });
     return () => {
       unlisten.then(fn => fn());
+      unlistenReconnecting.then(fn => fn());
+      unlistenReconnected.then(fn => fn());
     };
-  }, []);
+  }, [listUart]);
 
   const handlePortChange = (event: SelectChangeEvent) => {
     setPort(event.target.value as string);
@@ -45,30 +74,22 @@ const SerialSettings: React.FC = () => {
     if (!isConnected) {
       const selectedPortEntry = ports.find(p => p.portName === port);
       const portDescription = selectedPortEntry?.deviceLabel ?? '';
-      invoke<void>('open_port', { portName: port, portDescription, baudRate })
+      invoke<void>('open_port', { portName: port, portDescription, baudRate, autoReconnect })
         .then(() => setIsConnected(true))
         .catch(() => {
           // Connection errors are surfaced as system messages in the log
         });
     } else {
+      // Also cancels a reconnection in progress
       invoke<void>('close_port')
-        .then(() => setIsConnected(false))
+        .then(() => {
+          setIsConnected(false);
+          setIsReconnecting(false);
+        })
         .catch((err: unknown) => console.error(err));
     }
   };
 
-  const listUart = () => {
-    invoke<SerialPortEntry[]>('list_ports')
-      .then((s) => {
-        setPorts(s);
-        if (!port && s[0]?.portName) {
-          setPort(s[0].portName);
-        }
-      })
-      .catch((err: unknown) => {
-        console.error(err);
-      });
-  };
 
   const renderPortLabel = (portEntry: SerialPortEntry) => (
     <Box
@@ -177,6 +198,11 @@ const SerialSettings: React.FC = () => {
           {isConnected ? 'Disconnect' : 'Connect'}
         </Button>
       </Box>
+      {isConnected && isReconnecting && (
+        <Typography variant="caption" sx={{ color: 'warning.main', mt: -1 }}>
+          Port lost, waiting for it to come back…
+        </Typography>
+      )}
     </Box>
   );
 };

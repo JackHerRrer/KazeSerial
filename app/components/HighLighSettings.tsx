@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import IconButton from '@mui/material/IconButton';
@@ -11,15 +11,15 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Tooltip from '@mui/material/Tooltip';
-import Popover from '@mui/material/Popover';
-import Sketch from '@uiw/react-color-sketch';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
 import SaveIcon from '@mui/icons-material/Save';
+import ColorPickerButton from './ColorPickerButton';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import { writeTextFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -69,14 +69,11 @@ interface PersistedHighlightConfig {
 }
 
 interface HighlightMessagePayload {
-    id: number;
     text: string;
     color: string;
     is_regex: boolean;
     case_sensitive: boolean;
     select_mode: HighlightSelectMode;
-    custom_select: string;
-    whole_line: boolean;
     focus: boolean;
     remove: boolean;
     advanced_selections?: Array<{
@@ -86,13 +83,13 @@ interface HighlightMessagePayload {
 }
 
 const DEFAULT_HIGHLIGHT_COLOR = '#cc7f12';
-const COLOR_COLUMN_WIDTH = 36;
-const CASE_SENSITIVE_COLUMN_WIDTH = 36;
-const REGEX_COLUMN_WIDTH = 36;
-const FOCUS_COLUMN_WIDTH = 36;
-const REMOVE_COLUMN_WIDTH = 36;
-const WHOLE_LINE_COLUMN_WIDTH = 36;
-const ADVANCED_COLUMN_WIDTH = 36;
+const COLOR_COLUMN_WIDTH = 30;
+const CASE_SENSITIVE_COLUMN_WIDTH = 30;
+const REGEX_COLUMN_WIDTH = 30;
+const FOCUS_COLUMN_WIDTH = 30;
+const REMOVE_COLUMN_WIDTH = 30;
+const WHOLE_LINE_COLUMN_WIDTH = 30;
+const ADVANCED_COLUMN_WIDTH = 30;
 const DRAG_COLUMN_WIDTH = 28;
 const SENTENCE_MIN_COLUMN_WIDTH = 180;
 const OPTION_COLUMNS = [
@@ -105,6 +102,9 @@ const OPTION_COLUMNS = [
         { label: 'Advanced', width: ADVANCED_COLUMN_WIDTH },
 ] as const;
 const OPTION_LABEL_RIGHT_OFFSET_PX = 10;
+// Text fields of the rules (search and capture groups): tighter padding than the small size so the rules take less height
+// and the text starts close to the left edge, a bit less at the bottom so the text, mostly without descenders, looks centered
+const RULE_INPUT_SX = { '& .MuiInputBase-input': { pt: 0.5, pb: '1px', pl: 0.7, pr: 1 } };
 const ACTION_COLUMN_WIDTH = 36;
 const TABLE_MIN_WIDTH =
     DRAG_COLUMN_WIDTH +
@@ -163,60 +163,50 @@ const createDefaultHighlight = (): HighligtConfig => ({
     remove: false,
 });
 
-const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePayload[] => {
-    const payload: HighlightMessagePayload[] = [];
-
-    highlights.forEach((highlight) => {
-        if (highlight.advanced && highlight.is_regex) {
-            const advancedSelectionsPayload =
-                highlight.advanced_selections.length > 0
-                    ? highlight.advanced_selections
-                    : [{ id: highlight.id, color: highlight.color, selector: '' }];
-
-            payload.push({
-                id: highlight.id,
-                text: highlight.text,
-                color: highlight.color,
-                is_regex: highlight.is_regex,
-                case_sensitive: highlight.case_sensitive,
-                select_mode: 'custom',
-                custom_select: '',
-                whole_line: false,
-                focus: highlight.focus,
-                remove: highlight.remove,
-                advanced_selections: advancedSelectionsPayload.map((selection) => ({
-                    color: selection.color,
-                    custom_select: selection.selector,
-                })),
-            });
-            return;
-        }
-
-        payload.push({
-            id: highlight.id,
+const toHighlightPayload = (highlights: HighligtConfig[]): HighlightMessagePayload[] =>
+    highlights.map((highlight) => {
+        // Without any group selected, the backend colors the whole matches
+        const isAdvanced = highlight.advanced && highlight.is_regex;
+        return {
             text: highlight.text,
             color: highlight.color,
             is_regex: highlight.is_regex,
             case_sensitive: highlight.case_sensitive,
-            select_mode: highlight.whole_line ? 'whole_line' : 'match',
-            custom_select: '',
-            whole_line: highlight.whole_line,
+            select_mode: isAdvanced ? 'custom' : highlight.whole_line ? 'whole_line' : 'match',
             focus: highlight.focus,
             remove: highlight.remove,
-        });
+            advanced_selections: isAdvanced
+                ? highlight.advanced_selections.map((selection) => ({ color: selection.color, custom_select: selection.selector }))
+                : undefined,
+        };
     });
 
-    return payload;
-};
 
+// Delay without any rule change before the logs are refreshed, so typing a pattern does not
+// reprocess the whole log on every key
+const AUTO_REFRESH_DELAY_MS = 300;
 
-export function useCustomHilightsState(): [HighligtConfig[] | undefined, (newValue: HighligtConfig[]) => void] {
+type SetHighlights = (newValue: HighligtConfig[], options?: { refresh?: boolean }) => void;
+
+export function useCustomHilightsState(): [HighligtConfig[] | undefined, SetHighlights] {
     const [value, setValue] = useState<HighligtConfig[]>();
+    const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-    const customSetValue = useCallback((newValue: HighligtConfig[]) => {
+    useEffect(() => () => clearTimeout(refreshTimer.current), []);
+
+    // The main and focus logs are refreshed with the new rules, unless `refresh` is false
+    const customSetValue = useCallback<SetHighlights>((newValue, { refresh = true } = {}) => {
         setValue(newValue);
         invoke<void>('set_highlights', { highlights: toHighlightPayload(newValue) })
-            .then(() => saveHighlightsToFile(newValue))
+            .then(() => {
+                if (refresh) {
+                    clearTimeout(refreshTimer.current);
+                    refreshTimer.current = setTimeout(() => {
+                        invoke<void>('refresh_logs').catch((err: unknown) => console.error(err));
+                    }, AUTO_REFRESH_DELAY_MS);
+                }
+                return saveHighlightsToFile(newValue);
+            })
             .catch((err: unknown) => console.error(err));
     }, []);
 
@@ -234,13 +224,20 @@ async function saveHighlightsToFile(highlights: HighligtConfig[]) {
     }
 }
 
+const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode =>
+    value === 'match' || value === 'whole_line' || value === 'custom';
+
+const getSelectModeFromPersisted = (highlight: PersistedHighlightConfig): HighlightSelectMode => {
+    if (isHighlightSelectMode(highlight.select_mode)) return highlight.select_mode;
+    if (highlight.whole_line) return 'whole_line';
+    return 'match';
+};
+
+const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode): HighlightSelectMode =>
+    (!isRegex && selectMode === 'custom') ? 'match' : selectMode;
+
 /** Parses a persisted JSON config entry into a runtime HighligtConfig, with safe defaults */
-function parsePersistedHighlight(
-    h: PersistedHighlightConfig,
-    index: number,
-    normalizeSelectMode: (isRegex: boolean, mode: HighlightSelectMode) => HighlightSelectMode,
-    getSelectModeFromPersisted: (h: PersistedHighlightConfig) => HighlightSelectMode,
-): HighligtConfig {
+function parsePersistedHighlight(h: PersistedHighlightConfig, index: number): HighligtConfig {
     const isRegex = h.is_regex ?? true;
     const color = h.color ?? DEFAULT_HIGHLIGHT_COLOR;
     const selectMode = normalizeSelectMode(isRegex, getSelectModeFromPersisted(h));
@@ -269,101 +266,40 @@ function parsePersistedHighlight(
     };
 }
 
-// Color palette matching the screenshot (8 columns × 4 rows, light → dark)
-const PRESET_COLORS = [
-    '#99c1f1', '#8ff0a4', '#f9f06b', '#ffbe6f', '#f66151', '#dc8add', '#cdab8f', '#ffffff',
-    '#62a0ea', '#57e389', '#f8e45c', '#ffa348', '#ed333b', '#c061cb', '#b5835a', '#deddda',
-    '#3584e4', '#33d17a', '#f6d32d', '#ff7800', '#e01b24', '#9141ac', '#986a44', '#9a9996',
-    '#1c71d8', '#26a269', '#f5c211', '#e66100', '#c01c28', '#813d9c', '#856e3c', '#5e5c64',
-    '#1a5fb4', '#25a168', '#e5a50a', '#c54500', '#a51d2d', '#613583', '#63452c', '#241f31',
-
-];
-
-interface ColorPickerButtonProps {
-    value: string;
-    onChange: (color: string) => void;
-    disabled?: boolean;
-    opacity?: number;
-}
-
-const ColorPickerButton: React.FC<ColorPickerButtonProps> = ({ value, onChange, disabled, opacity }) => {
-    const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-
-    return (
-        <>
-            <Box
-                component="button"
-                onClick={disabled ? undefined : (e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget)}
-                sx={{
-                    width: 26,
-                    height: 26,
-                    backgroundColor: value,
-                    border: '2px solid rgba(255,255,255,0.25)',
-                    borderRadius: '3px',
-                    cursor: disabled ? 'not-allowed' : 'pointer',
-                    opacity: opacity ?? 1,
-                    padding: 0,
-                    flexShrink: 0,
-                    '&:hover': disabled ? {} : { borderColor: 'rgba(255,255,255,0.6)' },
-                }}
-            />
-            <Popover
-                open={Boolean(anchorEl)}
-                anchorEl={anchorEl}
-                onClose={() => setAnchorEl(null)}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-            >
-                <Sketch
-                    color={value}
-                    presetColors={PRESET_COLORS}
-                    disableAlpha
-                    onChange={(color) => onChange(color.hex)}
-                    style={{
-                        '--sketch-background': '#2b2b2b',
-                        '--sketch-box-shadow': 'none',
-                        '--sketch-swatch-border-top': '1px solid #444',
-                        '--sketch-swatch-box-shadow': 'rgb(0 0 0 / 40%) 0px 0px 0px 1px inset',
-                        '--sketch-alpha-box-shadow': 'rgb(0 0 0 / 40%) 0px 0px 0px 1px inset',
-                        '--editable-input-color': '#fff',
-                        '--editable-input-label-color': '#aaa',
-                        '--editable-input-box-shadow': '0 0 0 1px #555 inset',
-                    } as React.CSSProperties}
-                />
-            </Popover>
-        </>
-    );
-};
-
 const HighLighSettings: React.FC = () => {
     const [highlights, setHighlights] = useCustomHilightsState();
     const [draggedHighlightId, setDraggedHighlightId] = useState<number | null>(null);
     const [dropIndicator, setDropIndicator] = useState<{ id: number; position: 'before' | 'after' } | null>(null);
 
-    const isHighlightSelectMode = (value: unknown): value is HighlightSelectMode =>
-        value === 'match' || value === 'whole_line' || value === 'custom';
-
-    const getSelectModeFromPersisted = (highlight: PersistedHighlightConfig): HighlightSelectMode => {
-        if (isHighlightSelectMode(highlight.select_mode)) return highlight.select_mode;
-        if (highlight.whole_line) return 'whole_line';
-        return 'match';
-    };
-
-    const normalizeSelectMode = (isRegex: boolean, selectMode: HighlightSelectMode): HighlightSelectMode =>
-        (!isRegex && selectMode === 'custom') ? 'match' : selectMode;
     // Load highlights from AppConfig on mount
-    async function loadHighlightsFromFile() {
-        try {
-            const result = await readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig });
-            const persisted = JSON.parse(result) as PersistedHighlightConfig[];
-            setHighlights(persisted.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
-        } catch (e) {
-            console.error('Failed to load highlights:', e);
-        }
-    }
     useEffect(() => {
-        loadHighlightsFromFile();
-    }, []);
+        readTextFile('highlight_settings.json', { baseDir: BaseDirectory.AppConfig })
+            .then(result => {
+                const persisted = JSON.parse(result) as PersistedHighlightConfig[];
+                // No refresh for the saved rules: at launch there are no logs yet
+                setHighlights(persisted.map(parsePersistedHighlight), { refresh: false });
+            })
+            .catch(e => console.error('Failed to load highlights:', e));
+    }, [setHighlights]);
+
+    // Latest rules, read by the MCP listener without re-subscribing on every change
+    const highlightsRef = useRef(highlights);
+    useEffect(() => {
+        highlightsRef.current = highlights;
+    }, [highlights]);
+
+    // Rule added by an MCP client (add_highlight): appended as if the user had filled a new row
+    useEffect(() => {
+        const unlisten = listen<PersistedHighlightConfig>('mcp-add-highlight', (e) => {
+            const rule = parsePersistedHighlight({ ...e.payload, id: createDefaultHighlight().id }, 0);
+            // Updated right away so rules added in quick succession are all kept
+            const next = [...(highlightsRef.current ?? []), rule];
+            highlightsRef.current = next;
+            // add_highlight refreshes the logs itself, before returning to the MCP client
+            setHighlights(next, { refresh: false });
+        });
+        return () => { unlisten.then(f => f()); };
+    }, [setHighlights]);
 
     const handleAddHighlight = async () => {
         if(highlights == undefined) {
@@ -579,8 +515,10 @@ const HighLighSettings: React.FC = () => {
     };
 
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0, width: '100%' }}>
-            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-start', position: 'relative', zIndex: 1, mb: '-42px' }}>
+        // Fills the panel height so the table scrolls by itself, below its sticky header
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0, width: '100%', height: '100%' }}>
+            {/* Above the sticky table header, which they overlap */}
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-start', position: 'relative', zIndex: 3, mb: '-42px' }}>
                 <IconButton
                     size="medium"
                     title="Load highlight rules from file"
@@ -590,7 +528,7 @@ const HighLighSettings: React.FC = () => {
                         try {
                             const result = await readTextFile(filePath);
                             const parsed = JSON.parse(result) as PersistedHighlightConfig[];
-                            setHighlights(parsed.map((h, i) => parsePersistedHighlight(h, i, normalizeSelectMode, getSelectModeFromPersisted)));
+                            setHighlights(parsed.map(parsePersistedHighlight));
                         } catch (e) {
                             console.error('Failed to load highlights:', e);
                         }
@@ -611,9 +549,15 @@ const HighLighSettings: React.FC = () => {
                     <SaveIcon fontSize="medium" />
                 </IconButton>
             </Box>
-            <Box sx={{ overflowX: 'auto', overflowY: 'visible', width: '100%' }}>
-                <Table size="small" sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH }}>
-                    <TableHead sx={{ overflow: 'visible' }}>
+            <Box sx={{ overflow: 'auto', width: '100%', flex: 1, minHeight: 0 }}>
+                {/* Checkboxes with a smaller padding than the small size (9px) so they fit in the narrow option columns */}
+                <Table
+                    size="small"
+                    sx={{ tableLayout: 'fixed', overflow: 'visible', width: '100%', minWidth: TABLE_MIN_WIDTH, '& .MuiCheckbox-root': { p: 0.75 } }}
+                >
+                    {/* Sticky so the column labels stay visible when scrolling through many rules. Set on the head rather than on
+                        its cells, so the rotated labels overflowing their cell are not covered by the next cell background */}
+                    <TableHead sx={{ overflow: 'visible', position: 'sticky', top: 0, zIndex: 2, bgcolor: 'background.default' }}>
                         <TableRow sx={{ overflow: 'visible' }}>
                             <TableCell
                                 sx={{
@@ -624,7 +568,11 @@ const HighLighSettings: React.FC = () => {
                                     borderBottom: 'none',
                                 }}
                             />
-                            <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>Search</TableCell>
+                            {/* Horizontal padding of the body cell plus the one of the input, so the label lines up with the typed text.
+                                Same bottom offset and line height as the rotated option labels, so all the labels sit on the same line */}
+                            <TableCell sx={{ verticalAlign: 'bottom', minWidth: SENTENCE_MIN_COLUMN_WIDTH, pl: 0.5, pr: 1, pb: '4px', lineHeight: 1 }}>
+                                Search
+                            </TableCell>
                             {OPTION_COLUMNS.map((optionColumn) => {
                                 return (
                                     <TableCell
@@ -634,7 +582,7 @@ const HighLighSettings: React.FC = () => {
                                             minWidth: optionColumn.width,
                                             maxWidth: optionColumn.width,
                                             p: 0,
-                                            height: '80px',
+                                            height: '72px',
                                             overflow: 'visible',
                                             verticalAlign: 'bottom',
                                         }}
@@ -714,7 +662,9 @@ const HighLighSettings: React.FC = () => {
                                             </IconButton>
                                         </Box>
                                     </TableCell>
-                                    <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH }}>
+                                    {/* No left padding so the field touches the drag handle, a bit on the right to keep some space before the color. Little
+                                        bottom padding when the advanced row follows, to keep the two rows close */}
+                                    <TableCell sx={{ minWidth: SENTENCE_MIN_COLUMN_WIDTH, pl: 0, pr: 1, ...(filter.advanced && { pb: '2px' }) }}>
                                         <TextField
                                             size="small"
                                             placeholder="Filter text"
@@ -722,6 +672,7 @@ const HighLighSettings: React.FC = () => {
                                             onChange={(e) => handleHighlightChange(filter.id, 'text', e.target.value)}
                                             fullWidth
                                             error={isInvalidRegex(filter.text, filter.is_regex)}
+                                            sx={RULE_INPUT_SX}
                                         />
                                     </TableCell>
                                     <TableCell
@@ -861,7 +812,7 @@ const HighLighSettings: React.FC = () => {
                                         />
                                         <TableCell
                                             colSpan={8}
-                                            sx={{ p: 0.5, pl: 4 }}
+                                            sx={{ p: 0.5, pt: 0, pl: 4 }}
                                         >
                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
                                                 <SubdirectoryArrowRightIcon sx={{ color: 'text.disabled', fontSize: '1.1rem', mr: 0.5 }} />
@@ -891,13 +842,7 @@ const HighLighSettings: React.FC = () => {
                                                                     }
                                                                     disabled={filter.remove}
                                                                     error={hasInvalidGroup(selection.selector, filter.text)}
-                                                                    sx={{
-                                                                        width: 55,
-                                                                        '& .MuiInputBase-input': {
-                                                                            fontSize: '0.75rem',
-                                                                            py: 0.5,
-                                                                        },
-                                                                    }}
+                                                                    sx={{ width: 55, ...RULE_INPUT_SX }}
                                                                 />
                                                             </span>
                                                         </Tooltip>
